@@ -1,0 +1,45 @@
+series:
+  - ticker: KXBTC15M
+    enabled: true
+    min_edge_pp: 10.0
+    max_contracts: 300
+    max_notional_usd: 200.0
+  - ticker: KXBTCD
+    enabled: true
+    min_edge_pp: 8.0
+    max_contracts: 500
+    max_notional_usd: 250.0
+
+risk:
+  bankroll_usd: 1000.0
+  kelly_fraction: 0.25
+  max_open_positions: 8
+  max_exposure_usd: 500.0
+  max_loss_per_trade_usd: 75.0
+  cooldown_seconds: 5.0
+  min_seconds_to_expiry: 45.0
+  max_seconds_to_expiry_15m: 840
+  max_seconds_to_expiry_1h: 3300
+
+smile:
+  symbol: IBIT
+  min_oi: 10
+  min_volume: 0
+  max_spread_pct: 0.35
+  max_smile_age_seconds: 21600
+  stale_edge_multiplier: 1.75
+  cache_path: data/cache/ibit_smile.json
+  prefer_expiries: 4
+  risk_free_rate: 0.045
+  dividend_yield: 0.0
+
+execution:
+  mode: paper
+  time_in_force: immediate_or_cancel
+  use_taker: true
+  price_improve_ticks: 0
+  dry_run: true
+
+scan_interval_seconds: 2.0
+fee_rate: 0.07
+fee_multiplier: 1.0
