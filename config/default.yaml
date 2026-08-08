@@ -1,12 +1,12 @@
 series:
   - ticker: KXBTCD
-    enabled: true
+    enabled: false
     min_edge_pp: 10.0
     max_contracts: 400
     max_notional_usd: 200.0
   - ticker: KXBTC15M
-    enabled: false
-    min_edge_pp: 12.0
+    enabled: true
+    min_edge_pp: 20.0
     max_contracts: 200
     max_notional_usd: 100.0
 
@@ -44,6 +44,30 @@ bot_action:
   conditional_min_gap_pp: 15.0
   conditional_min_confidence: 0.70
   conditional_max_disagreement_pp: 6.0
+
+# Kalshi BTC 15-Min Intelligence V6 (activated workflow)
+v6:
+  enabled: true
+  series_ticker: KXBTC15M
+  strict_min_gap_dollars: 0.20
+  strict_max_gap_dollars: 0.25
+  min_trades_per_bucket: 3
+  monte_carlo_sims: 5000
+  max_spread: 0.08
+  min_liquidity_score: 0.15
+  max_model_disagreement_pp: 12.0
+  min_pattern_examples: 5
+  require_pattern_evidence: false
+  journal_path: data/v6_trade_journal.db
+  bankroll_usd: 1000.0
+  kelly_fraction: 0.12
+  max_position_usd: 75.0
+  max_exposure_usd: 250.0
+  max_daily_loss_usd: 100.0
+  max_consecutive_losses: 4
+  cooldown_after_loss_seconds: 120.0
+  min_seconds_to_expiry: 60.0
+  max_seconds_to_expiry: 840.0
 
 smile:
   symbol: IBIT

@@ -30,6 +30,7 @@ kalshi-bot = "kalshi_bot.main:main"
 kalshi-forecast = "kalshi_bot.cli:forecast_main"
 kalshi-scan = "kalshi_bot.cli:scan_main"
 kalshi-demo = "kalshi_bot.cli:demo_main"
+kalshi-intelligence = "run:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -69,6 +69,33 @@ class ForecastGateConfig(BaseModel):
     deep_itm_extra_edge_pp: float = 8.0
 
 
+class V6Config(BaseModel):
+    """Kalshi BTC 15-Min Intelligence V6 settings."""
+
+    enabled: bool = True
+    series_ticker: str = "KXBTC15M"
+    # STRICT EDGE: market must be ≥20–25¢ below model probability (hard filter).
+    strict_min_gap_dollars: float = 0.20
+    strict_max_gap_dollars: float = 0.25
+    min_trades_per_bucket: int = 3
+    monte_carlo_sims: int = 5000
+    max_spread: float = 0.08
+    min_liquidity_score: float = 0.15
+    max_model_disagreement_pp: float = 12.0
+    min_pattern_examples: int = 5
+    require_pattern_evidence: bool = False
+    journal_path: str = "data/v6_trade_journal.db"
+    bankroll_usd: float = 1000.0
+    kelly_fraction: float = 0.12
+    max_position_usd: float = 75.0
+    max_exposure_usd: float = 250.0
+    max_daily_loss_usd: float = 100.0
+    max_consecutive_losses: int = 4
+    cooldown_after_loss_seconds: float = 120.0
+    min_seconds_to_expiry: float = 60.0
+    max_seconds_to_expiry: float = 840.0
+
+
 class BotActionConfig(BaseModel):
     """Gap-tiered buy action policy (model prob − market price).
 
@@ -102,6 +129,7 @@ class BotConfig(BaseModel):
     smile: SmileConfig = Field(default_factory=SmileConfig)
     forecast_gates: ForecastGateConfig = Field(default_factory=ForecastGateConfig)
     bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
+    v6: V6Config = Field(default_factory=V6Config)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     scan_interval_seconds: float = 5.0
     kalshi_public_base: str = "https://api.elections.kalshi.com/trade-api/v2"
