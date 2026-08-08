@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from kalshi_bot.config import BotConfig, SeriesConfig
 from kalshi_bot.data.brti import SpotSnapshot, resolve_spot
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
+from kalshi_bot.data.realized_vol import SECONDS_PER_YEAR, RealizedVolEstimate, estimate_realized_vol
 from kalshi_bot.models.smile import VolSmile
 from kalshi_bot.strategy.decision import DecisionVerdict, TradeDecision, evaluate_forecast_market
 from kalshi_bot.strategy.mispricing import Mispricing, evaluate_market
@@ -35,6 +37,7 @@ class ForecastScanResult:
     markets_scanned: int
     asof: datetime
     top_blockers: list[tuple[str, int]] = field(default_factory=list)
+    realized_vol_ann: float | None = None
 
 
 def _is_hourly_event(raw: dict) -> bool:
@@ -45,8 +48,7 @@ def _is_hourly_event(raw: dict) -> bool:
         return True
     if cadence == "daily":
         return False
-    # Heuristic: hourly event tickers end with hour code like ...0804 (HH)
-    # Daily often ends with ...0817 for 5pm. Prefer open→close span near 1h.
+    # Heuristic from open→close span when cadence metadata is absent on /markets.
     open_t = raw.get("open_time")
     close_t = raw.get("close_time")
     if open_t and close_t:
@@ -61,6 +63,19 @@ def _is_hourly_event(raw: dict) -> bool:
         except Exception:
             pass
     return True
+
+
+def _scale_realized(base: RealizedVolEstimate, horizon_seconds: float) -> RealizedVolEstimate:
+    horizon_seconds = max(float(horizon_seconds), 1.0)
+    return RealizedVolEstimate(
+        annualized_vol=base.annualized_vol,
+        horizon_vol=base.annualized_vol * math.sqrt(horizon_seconds / SECONDS_PER_YEAR),
+        horizon_seconds=horizon_seconds,
+        n_returns=base.n_returns,
+        bar_seconds=base.bar_seconds,
+        source=base.source,
+        spot=base.spot,
+    )
 
 
 class MispricingScanner:
@@ -152,6 +167,8 @@ class ForecastScanner:
         scanned = 0
         now = datetime.now(timezone.utc)
         gates = self.config.forecast_gates
+        # One realized-vol snapshot per scan (shared across strikes).
+        realized = estimate_realized_vol(horizon_seconds=gates.max_seconds_to_expiry)
 
         for series_cfg in self.config.series:
             if not series_cfg.enabled or series_cfg.ticker != "KXBTCD":
@@ -179,13 +196,14 @@ class ForecastScanner:
                     fee_rate=self.config.fee_rate,
                     fee_multiplier=self.config.fee_multiplier,
                     now=now,
+                    realized=_scale_realized(realized, secs),
+                    spot_is_official=spot.is_official,
                 )
                 decisions.append(decision)
 
         trades = [d for d in decisions if d.verdict == DecisionVerdict.TRADE]
         no_trades = [d for d in decisions if d.verdict == DecisionVerdict.NO_TRADE]
         trades.sort(key=lambda d: d.expected_value_per_contract, reverse=True)
-        # Rank near-misses by conservative edge for diagnostics
         no_trades.sort(key=lambda d: d.edge_after_fees_pp, reverse=True)
 
         blocker_counts: dict[str, int] = {}
@@ -196,13 +214,14 @@ class ForecastScanner:
         top_blockers = sorted(blocker_counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
 
         logger.info(
-            "forecast scan markets=%d trades=%d no_trade=%d spot=%.2f (%s) smile=%s",
+            "forecast scan markets=%d trades=%d no_trade=%d spot=%.2f (%s) smile=%s rv=%.1f%%",
             scanned,
             len(trades),
             len(no_trades),
             spot.brti,
             spot.source,
             "none" if smile is None else f"atm={smile.atm_iv*100:.1f}%",
+            realized.annualized_vol * 100,
         )
         return ForecastScanResult(
             spot=spot,
@@ -213,4 +232,5 @@ class ForecastScanner:
             markets_scanned=scanned,
             asof=now,
             top_blockers=top_blockers,
+            realized_vol_ann=realized.annualized_vol,
         )

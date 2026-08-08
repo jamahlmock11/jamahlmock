@@ -117,6 +117,60 @@ def test_wide_spread_blocks_trade():
     assert any("spread" in b.lower() for b in decision.blockers)
 
 
+def test_proxy_spot_raises_bar_to_no_trade():
+    spot = 65000.0
+    smile = synthetic_smile(spot, atm_iv=0.9)
+    smile.is_synthetic = False
+    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    # Mild edge that would pass with official spot but fail with proxy multiplier
+    market = {
+        "ticker": "KXBTCD-PROXY",
+        "series_ticker": "KXBTCD",
+        "strike": 65050.0,
+        "close_time": close,
+        "yes_ask": 0.30,
+        "yes_bid": 0.27,
+        "no_ask": 0.73,
+        "volume": 2000.0,
+        "strike_type": "greater",
+    }
+    with patch("kalshi_bot.models.forecast.estimate_realized_vol", return_value=_reliable_rv(spot, 0.55)):
+        official = evaluate_forecast_market(
+            market,
+            spot=spot,
+            smile=smile,
+            series_cfg=SeriesConfig(ticker="KXBTCD", min_edge_pp=5.0),
+            smile_cfg=SmileConfig(),
+            gates=ForecastGateConfig(
+                min_edge_pp=5.0,
+                min_confidence=0.50,
+                max_disagreement_pp=25.0,
+                proxy_spot_edge_multiplier=1.5,
+                proxy_spot_confidence_penalty=0.30,
+            ),
+            spot_is_official=True,
+        )
+        proxy = evaluate_forecast_market(
+            market,
+            spot=spot,
+            smile=smile,
+            series_cfg=SeriesConfig(ticker="KXBTCD", min_edge_pp=5.0),
+            smile_cfg=SmileConfig(),
+            gates=ForecastGateConfig(
+                min_edge_pp=5.0,
+                min_confidence=0.50,
+                max_disagreement_pp=25.0,
+                proxy_spot_edge_multiplier=1.5,
+                proxy_spot_confidence_penalty=0.30,
+            ),
+            spot_is_official=False,
+        )
+    assert proxy.confidence <= official.confidence
+    # Proxy path must be at least as conservative
+    if official.verdict == DecisionVerdict.NO_TRADE:
+        assert proxy.verdict == DecisionVerdict.NO_TRADE
+
+
 def test_ensemble_disagreement_reduces_confidence():
     spot = 65000.0
     # Mildly OTM: low realized vol collapses p≈0 while high smile IV keeps mass

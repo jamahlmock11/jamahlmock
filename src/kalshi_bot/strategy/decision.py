@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from kalshi_bot.config import ForecastGateConfig, SeriesConfig, SmileConfig
+from kalshi_bot.data.realized_vol import RealizedVolEstimate
 from kalshi_bot.models.forecast import EnsembleForecast, ForecastAction, forecast_prob_above
 from kalshi_bot.models.smile import VolSmile
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
@@ -71,6 +72,8 @@ def evaluate_forecast_market(
     fee_rate: float = 0.07,
     fee_multiplier: float = 1.0,
     now: datetime | None = None,
+    realized: RealizedVolEstimate | None = None,
+    spot_is_official: bool = False,
 ) -> TradeDecision:
     """Return TRADE or NO_TRADE for one KXBTCD market."""
     now = now or datetime.now(timezone.utc)
@@ -142,15 +145,26 @@ def evaluate_forecast_market(
         rate=smile_cfg.risk_free_rate,
         dividend=smile_cfg.dividend_yield,
         now=now,
+        realized=realized,
         yes_bid=yes_bid,
         yes_ask=yes_ask,
         include_equal=True,
     )
     reasons.extend(forecast.evidence_notes)
 
-    if forecast.confidence < gates.min_confidence:
+    confidence = forecast.confidence
+    effective_min_edge = max(gates.min_edge_pp, series_cfg.min_edge_pp)
+    if not spot_is_official:
+        confidence = max(0.0, confidence - gates.proxy_spot_confidence_penalty)
+        effective_min_edge *= gates.proxy_spot_edge_multiplier
+        reasons.append(
+            f"proxy spot: confidence -{gates.proxy_spot_confidence_penalty:.2f}, "
+            f"edge floor x{gates.proxy_spot_edge_multiplier:.2f}"
+        )
+
+    if confidence < gates.min_confidence:
         blockers.append(
-            f"confidence {forecast.confidence:.2f} below floor {gates.min_confidence:.2f}"
+            f"confidence {confidence:.2f} below floor {gates.min_confidence:.2f}"
         )
     if forecast.disagreement_pp > gates.max_disagreement_pp:
         blockers.append(
@@ -160,19 +174,24 @@ def evaluate_forecast_market(
         blockers.append("ensemble evidence insufficient")
 
     p = forecast.probability_yes
-    # Conservative probability for EV: use lower (YES) / upper (NO) band edge
     p_yes_conservative = forecast.probability_lo
     p_no_conservative = 1.0 - forecast.probability_hi
 
+    # Deep ITM YES: spot already through strike by buffer — NO mean-reversion
+    # trades need extra edge (quiet-tape vol floors invent false reversals).
+    itm_cushion = spot - float(strike)
+    deep_itm_yes = itm_cushion >= gates.deep_itm_buffer_usd
+    deep_otm_yes = (-itm_cushion) >= gates.deep_itm_buffer_usd
+
     candidates: list[tuple[Side, float, float, float, float, ForecastAction]] = []
-    # side, price, edge_pp, edge_after_pp, ev, action
 
     if yes_ask is not None and 0 < yes_ask < 1:
         fee = quadratic_fee_per_contract(yes_ask, fee_rate=fee_rate, fee_multiplier=fee_multiplier)
         edge_pp = (p - yes_ask) * 100
         edge_after = (p_yes_conservative - yes_ask - fee) * 100
         ev = p_yes_conservative - yes_ask - fee
-        if edge_after >= gates.min_edge_pp:
+        need = effective_min_edge + (gates.deep_itm_extra_edge_pp if deep_otm_yes else 0.0)
+        if edge_after >= need:
             candidates.append((Side.YES, yes_ask, edge_pp, edge_after, ev, ForecastAction.TRADE_YES))
 
     if no_ask is None and yes_bid is not None:
@@ -183,18 +202,17 @@ def evaluate_forecast_market(
         edge_pp = (q - no_ask) * 100
         edge_after = (p_no_conservative - no_ask - fee) * 100
         ev = p_no_conservative - no_ask - fee
-        if edge_after >= gates.min_edge_pp:
+        need = effective_min_edge + (gates.deep_itm_extra_edge_pp if deep_itm_yes else 0.0)
+        if edge_after >= need:
             candidates.append((Side.NO, no_ask, edge_pp, edge_after, ev, ForecastAction.TRADE_NO))
 
     if not candidates:
         blockers.append(
-            f"no side clears conservative post-fee edge floor ({gates.min_edge_pp:.1f}pp)"
+            f"no side clears conservative post-fee edge floor ({effective_min_edge:.1f}pp)"
         )
 
-    # Series-specific floor can only raise the bar
-    min_edge = max(gates.min_edge_pp, series_cfg.min_edge_pp)
+    min_edge = effective_min_edge
     if smile is not None and smile.is_synthetic:
-        # Synthetic smiles are plumbing/demo only — require extreme edge.
         min_edge = max(min_edge, 25.0)
         reasons.append("synthetic smile: elevated edge floor to 25pp")
 
@@ -215,7 +233,7 @@ def evaluate_forecast_market(
             edge_pp=best[2] if best else 0.0,
             edge_after_fees_pp=best[3] if best else 0.0,
             expected_value_per_contract=best[4] if best else 0.0,
-            confidence=forecast.confidence,
+            confidence=confidence,
             disagreement_pp=forecast.disagreement_pp,
             seconds_to_expiry=secs,
             forecast=forecast,
@@ -225,7 +243,7 @@ def evaluate_forecast_market(
 
     side, price, edge_pp, edge_after, ev, action = max(viable, key=lambda c: c[4])
     reasons.append(
-        f"conservative EV ${ev:.3f}/contract after fees; conf={forecast.confidence:.2f}; "
+        f"conservative EV ${ev:.3f}/contract after fees; conf={confidence:.2f}; "
         f"disagreement={forecast.disagreement_pp:.1f}pp"
     )
     return TradeDecision(
@@ -240,7 +258,7 @@ def evaluate_forecast_market(
         edge_pp=edge_pp,
         edge_after_fees_pp=edge_after,
         expected_value_per_contract=ev,
-        confidence=forecast.confidence,
+        confidence=confidence,
         disagreement_pp=forecast.disagreement_pp,
         seconds_to_expiry=secs,
         forecast=forecast,

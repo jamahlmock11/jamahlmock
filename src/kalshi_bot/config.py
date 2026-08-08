@@ -58,6 +58,13 @@ class ForecastGateConfig(BaseModel):
     min_seconds_to_expiry: float = 120.0
     max_seconds_to_expiry: float = 55 * 60
     hourly_only: bool = True
+    # When scanning without authenticated BRTI, raise the bar.
+    proxy_spot_edge_multiplier: float = 1.5
+    proxy_spot_confidence_penalty: float = 0.30
+    # Reject NO on deep ITM YES (spot already through strike) unless edge is huge —
+    # quiet-tape vol floors can fabricate false mean-reversion edges.
+    deep_itm_buffer_usd: float = 25.0
+    deep_itm_extra_edge_pp: float = 8.0
 
 
 class ExecutionConfig(BaseModel):

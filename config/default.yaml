@@ -30,6 +30,10 @@ forecast_gates:
   min_seconds_to_expiry: 120.0
   max_seconds_to_expiry: 3300
   hourly_only: true
+  proxy_spot_edge_multiplier: 1.5
+  proxy_spot_confidence_penalty: 0.30
+  deep_itm_buffer_usd: 25.0
+  deep_itm_extra_edge_pp: 8.0
 
 smile:
   symbol: IBIT
