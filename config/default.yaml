@@ -1,0 +1,67 @@
+series:
+  - ticker: KXBTCD
+    enabled: true
+    min_edge_pp: 10.0
+    max_contracts: 400
+    max_notional_usd: 200.0
+  - ticker: KXBTC15M
+    enabled: false
+    min_edge_pp: 12.0
+    max_contracts: 200
+    max_notional_usd: 100.0
+
+risk:
+  bankroll_usd: 1000.0
+  kelly_fraction: 0.15
+  max_open_positions: 4
+  max_exposure_usd: 300.0
+  max_loss_per_trade_usd: 50.0
+  cooldown_seconds: 5.0
+  min_seconds_to_expiry: 120.0
+  max_seconds_to_expiry_15m: 840
+  max_seconds_to_expiry_1h: 3300
+
+forecast_gates:
+  min_confidence: 0.60
+  max_disagreement_pp: 10.0
+  min_edge_pp: 10.0
+  max_spread: 0.06
+  min_volume: 50.0
+  min_seconds_to_expiry: 120.0
+  max_seconds_to_expiry: 3300
+  hourly_only: true
+  proxy_spot_edge_multiplier: 1.5
+  proxy_spot_confidence_penalty: 0.30
+  deep_itm_buffer_usd: 25.0
+  deep_itm_extra_edge_pp: 8.0
+
+# Gap tiers: gap_pp = (model_probability − market_price) × 100
+# At model=60%: 35¢/25pp & 40¢/20pp → Strong BUY; 45¢/15pp → conditional; ≤50¢/10pp → No trade
+bot_action:
+  strong_buy_min_gap_pp: 20.0
+  conditional_min_gap_pp: 15.0
+  conditional_min_confidence: 0.70
+  conditional_max_disagreement_pp: 6.0
+
+smile:
+  symbol: IBIT
+  min_oi: 10
+  min_volume: 0
+  max_spread_pct: 0.35
+  max_smile_age_seconds: 21600
+  stale_edge_multiplier: 1.75
+  cache_path: data/cache/ibit_smile.json
+  prefer_expiries: 4
+  risk_free_rate: 0.045
+  dividend_yield: 0.0
+
+execution:
+  mode: paper
+  time_in_force: immediate_or_cancel
+  use_taker: true
+  price_improve_ticks: 0
+  dry_run: true
+
+scan_interval_seconds: 5.0
+fee_rate: 0.07
+fee_multiplier: 1.0
