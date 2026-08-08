@@ -453,9 +453,28 @@ def run_v6_loop(
                     best = result.trades[0]
                     if execute:
                         mis = v6_to_mispricing(best.ticker, best.decision)
-                        if mis:
+                        if mis is None:
+                            logger.warning("skip %s: could not build order", best.ticker)
+                        else:
                             size = best.decision.contracts or executor.risk.size(mis)
-                            executor.execute(mis, size, ignore_cooldown=True)
+                            if size <= 0:
+                                logger.info(
+                                    "skip %s %s: size=0 (bankroll=$%.2f price=%.0f¢)",
+                                    best.decision.verdict,
+                                    best.ticker,
+                                    config.risk.bankroll_usd,
+                                    (mis.kalshi_price or 0) * 100,
+                                )
+                            else:
+                                fill = executor.execute(mis, size, ignore_cooldown=True)
+                                if fill:
+                                    logger.info(
+                                        "executed %s %s x%d mode=%s",
+                                        best.decision.verdict,
+                                        best.ticker,
+                                        size,
+                                        fill.mode,
+                                    )
                     console.print(
                         f"[green]{best.decision.verdict}[/green] {best.ticker} "
                         f"gap={best.decision.strict_gap_dollars*100:.0f}¢"

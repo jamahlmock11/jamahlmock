@@ -593,14 +593,18 @@ class RiskControllerV6:
         bankroll: float,
         confidence: float,
     ) -> int:
-        """Confidence-scaled fractional Kelly."""
+        """Confidence-scaled fractional Kelly with 1-contract floor when affordable."""
         if price <= 0 or price >= 1 or prob <= price:
             return 0
         f_star = (prob - price) / (1.0 - price)
         frac = self.config.kelly_fraction * confidence
         dollars = bankroll * max(0.0, min(1.0, f_star * frac))
         dollars = min(dollars, self.config.max_position_usd)
-        return max(0, int(dollars / price))
+        contracts = max(0, int(dollars / price))
+        # With small bankrolls fractional Kelly rounds to 0 — still trade if we can afford 1.
+        if contracts == 0 and bankroll >= price and dollars > 0:
+            contracts = 1
+        return min(contracts, int(bankroll / price))
 
 
 # ---------------------------------------------------------------------------
