@@ -1,0 +1,4 @@
+{
+  "name": "Kalshi BTC Mispricing Bot",
+  "install": "pip install -e \".[dev]\""
+}
