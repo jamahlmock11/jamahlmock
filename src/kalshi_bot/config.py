@@ -31,7 +31,8 @@ class RiskConfig(BaseModel):
     cooldown_seconds: float = 5.0
     min_seconds_to_expiry: float = 120.0
     max_seconds_to_expiry_15m: float = 14 * 60
-    max_seconds_to_expiry_1h: float = 55 * 60
+    # Hourly (KXBTCD): last-20-minute execution window only.
+    max_seconds_to_expiry_1h: float = 20 * 60
 
 
 class SmileConfig(BaseModel):
@@ -56,7 +57,8 @@ class ForecastGateConfig(BaseModel):
     max_spread: float = 0.06
     min_volume: float = 50.0
     min_seconds_to_expiry: float = 120.0
-    max_seconds_to_expiry: float = 55 * 60
+    # Do not enter before the final 20 minutes of the hourly contract.
+    max_seconds_to_expiry: float = 20 * 60
     hourly_only: bool = True
     # When scanning without authenticated BRTI, raise the bar.
     proxy_spot_edge_multiplier: float = 1.5

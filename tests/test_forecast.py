@@ -27,7 +27,7 @@ def test_forecast_defaults_to_no_trade_when_fair():
     spot = 65000.0
     smile = synthetic_smile(spot, atm_iv=0.5)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=40)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
     market = {
         "ticker": "KXBTCD-FAIR",
         "series_ticker": "KXBTCD",
@@ -57,7 +57,7 @@ def test_large_mispricing_can_trade_yes_with_evidence():
     strike = 65100.0
     smile = synthetic_smile(spot, atm_iv=0.9)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
     market = {
         "ticker": "KXBTCD-EDGE-YES",
         "series_ticker": "KXBTCD",
@@ -92,7 +92,7 @@ def test_wide_spread_blocks_trade():
     spot = 65000.0
     smile = synthetic_smile(spot, atm_iv=0.9)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
     market = {
         "ticker": "KXBTCD-WIDE",
         "series_ticker": "KXBTCD",
@@ -121,7 +121,7 @@ def test_proxy_spot_raises_bar_to_no_trade():
     spot = 65000.0
     smile = synthetic_smile(spot, atm_iv=0.9)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
     # Mild edge that would pass with official spot but fail with proxy multiplier
     market = {
         "ticker": "KXBTCD-PROXY",
@@ -171,6 +171,62 @@ def test_proxy_spot_raises_bar_to_no_trade():
         assert proxy.verdict == DecisionVerdict.NO_TRADE
 
 
+def test_outside_last_20m_window_blocks_trade():
+    """Do not enter in the first ~40 minutes of the hour — only the last 20m."""
+    spot = 65000.0
+    smile = synthetic_smile(spot, atm_iv=0.9)
+    smile.is_synthetic = False
+    # 45 minutes remaining → outside last-20m window
+    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    market = {
+        "ticker": "KXBTCD-EARLY",
+        "series_ticker": "KXBTCD",
+        "strike": 65000.0,
+        "close_time": close,
+        "yes_ask": 0.08,
+        "yes_bid": 0.05,
+        "no_ask": 0.95,
+        "volume": 2000.0,
+        "strike_type": "greater",
+    }
+
+    class _FakeForecast:
+        probability_yes = 0.60
+        probability_lo = 0.58
+        probability_hi = 0.62
+        disagreement_pp = 2.0
+        confidence = 0.85
+        components = []
+        options = None
+        realized = None
+        spot = 65000.0
+        strike = 65000.0
+        seconds_to_expiry = 2700.0
+        evidence_notes = ("test",)
+        sufficient_evidence = True
+
+    with patch(
+        "kalshi_bot.strategy.decision.forecast_prob_above",
+        return_value=_FakeForecast(),
+    ):
+        decision = evaluate_forecast_market(
+            market,
+            spot=spot,
+            smile=smile,
+            series_cfg=SeriesConfig(ticker="KXBTCD", min_edge_pp=5.0),
+            smile_cfg=SmileConfig(),
+            gates=ForecastGateConfig(
+                min_edge_pp=5.0,
+                min_confidence=0.50,
+                max_spread=0.10,
+                max_seconds_to_expiry=20 * 60,
+            ),
+            spot_is_official=True,
+        )
+    assert decision.verdict == DecisionVerdict.NO_TRADE
+    assert any("last-20m" in b or "window" in b.lower() for b in decision.blockers)
+
+
 def test_gap_below_15pp_forces_no_trade_even_with_postfee_edge():
     """Matrix: 60% model vs 50¢ YES (10pp) → No trade, regardless of fee EV."""
     from kalshi_bot.config import BotActionConfig
@@ -180,7 +236,7 @@ def test_gap_below_15pp_forces_no_trade_even_with_postfee_edge():
     spot = 65000.0
     smile = synthetic_smile(spot, atm_iv=0.9)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
 
     # Force forecast probability ≈ 0.60 via a patched ensemble.
     market = {
@@ -239,7 +295,7 @@ def test_gap_20pp_is_strong_buy_candidate():
     spot = 65000.0
     smile = synthetic_smile(spot, atm_iv=0.9)
     smile.is_synthetic = False
-    close = datetime.now(timezone.utc) + timedelta(minutes=45)
+    close = datetime.now(timezone.utc) + timedelta(minutes=15)
     market = {
         "ticker": "KXBTCD-GAP20",
         "series_ticker": "KXBTCD",

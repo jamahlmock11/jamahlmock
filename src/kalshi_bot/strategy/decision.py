@@ -171,7 +171,10 @@ def evaluate_forecast_market(
     if secs < gates.min_seconds_to_expiry:
         blockers.append(f"too close to expiry ({secs:.0f}s < {gates.min_seconds_to_expiry:.0f}s)")
     if secs > gates.max_seconds_to_expiry:
-        blockers.append(f"outside 1h window ({secs:.0f}s > {gates.max_seconds_to_expiry:.0f}s)")
+        blockers.append(
+            f"outside last-{gates.max_seconds_to_expiry/60:.0f}m window "
+            f"({secs:.0f}s > {gates.max_seconds_to_expiry:.0f}s)"
+        )
 
     if yes_bid is not None and yes_ask is not None:
         spread = yes_ask - yes_bid
