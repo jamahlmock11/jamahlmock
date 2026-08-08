@@ -198,6 +198,7 @@ class ForecastScanner:
                     now=now,
                     realized=_scale_realized(realized, secs),
                     spot_is_official=spot.is_official,
+                    bot_action_cfg=self.config.bot_action,
                 )
                 decisions.append(decision)
 

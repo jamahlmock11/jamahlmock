@@ -67,6 +67,20 @@ class ForecastGateConfig(BaseModel):
     deep_itm_extra_edge_pp: float = 8.0
 
 
+class BotActionConfig(BaseModel):
+    """Gap-tiered buy action policy (model prob − market price).
+
+    Defaults match the 60% model reference matrix:
+    ≥20pp Strong BUY, ≥15pp conditional, <15pp No trade.
+    """
+
+    strong_buy_min_gap_pp: float = 20.0
+    conditional_min_gap_pp: float = 15.0
+    # Elevated confirmation required only for the CONDITIONAL tier.
+    conditional_min_confidence: float = 0.70
+    conditional_max_disagreement_pp: float = 6.0
+
+
 class ExecutionConfig(BaseModel):
     mode: Literal["paper", "live"] = "paper"
     time_in_force: str = "immediate_or_cancel"
@@ -85,6 +99,7 @@ class BotConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     smile: SmileConfig = Field(default_factory=SmileConfig)
     forecast_gates: ForecastGateConfig = Field(default_factory=ForecastGateConfig)
+    bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     scan_interval_seconds: float = 5.0
     kalshi_public_base: str = "https://api.elections.kalshi.com/trade-api/v2"

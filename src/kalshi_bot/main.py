@@ -93,9 +93,11 @@ def run_forecast_once(allow_synthetic_smile: bool = False) -> int:
             return 0
         for decision in result.trades:
             logger.info(
-                "TRADE %s %s | kalshi=%.1f%% forecast=%.1f%% EV=%.3f conf=%.2f Δ=%.1fpp t=%.0fs",
+                "TRADE %s %s | %s gap=%.1fpp kalshi=%.1f%% forecast=%.1f%% EV=%.3f conf=%.2f Δ=%.1fpp t=%.0fs",
                 decision.action.value,
                 decision.ticker,
+                decision.bot_action.value,
+                decision.gap_pp,
                 (decision.kalshi_price or 0) * 100,
                 decision.forecast_prob * 100,
                 decision.expected_value_per_contract,

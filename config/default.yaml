@@ -35,6 +35,14 @@ forecast_gates:
   deep_itm_buffer_usd: 25.0
   deep_itm_extra_edge_pp: 8.0
 
+# Gap tiers: gap_pp = (model_probability − market_price) × 100
+# At model=60%: 35¢/25pp & 40¢/20pp → Strong BUY; 45¢/15pp → conditional; ≤50¢/10pp → No trade
+bot_action:
+  strong_buy_min_gap_pp: 20.0
+  conditional_min_gap_pp: 15.0
+  conditional_min_confidence: 0.70
+  conditional_max_disagreement_pp: 6.0
+
 smile:
   symbol: IBIT
   min_oi: 10

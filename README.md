@@ -19,9 +19,23 @@ For each open hourly contract “YES if BRTI settles ≥ K”:
    - Physical-measure digital from **recent realized vol** (Kraken 1m OHLC)
    - Conservative vol-anchor digital (μ = 0)
 2. Measure **disagreement** and **confidence**
-3. Compute **conservative post-fee EV** (uses forecast uncertainty band, not the mean alone)
-4. Apply hard gates (spread, volume, horizon, confidence, disagreement, min edge)
-5. If any gate fails → **NO TRADE**
+3. Classify the **raw gap** `gap_pp = (model − market) × 100` into a bot action tier:
+   - **≥20pp** → Strong BUY candidate
+   - **≥15pp** → Only if other signals confirm (elevated confidence / low disagreement)
+   - **<15pp** → No trade
+4. Compute **conservative post-fee EV** (uses forecast uncertainty band, not the mean alone)
+5. Apply hard gates (spread, volume, horizon, confidence, disagreement, min edge)
+6. If any gate fails → **NO TRADE**
+
+Reference matrix at model probability = 60%:
+
+| Market YES | Gap | Bot action |
+|---|---|---|
+| 35¢ | 25pp | Strong BUY candidate |
+| 40¢ | 20pp | Strong BUY candidate |
+| 45¢ | 15pp | Only if other signals confirm |
+| 50¢ | 10pp | No trade |
+| 55¢ | 5pp | No trade |
 
 Settlement reference is **CF Benchmarks BRTI** (60-second average into expiry). Authenticated Kalshi credentials unlock the official BRTI passthrough; without them the engine scans on a public BTC proxy (paper mode only).
 
@@ -86,6 +100,9 @@ Config knobs that matter for PnL / accuracy:
 
 | Knob | Role |
 |------|------|
+| `bot_action.strong_buy_min_gap_pp` | Raw gap (≥20pp) → Strong BUY candidate |
+| `bot_action.conditional_min_gap_pp` | Raw gap (≥15pp) → conditional; below → No trade |
+| `bot_action.conditional_min_confidence` | Extra confirmation floor for conditional tier |
 | `forecast_gates.min_edge_pp` | Minimum **conservative** post-fee edge (pp) |
 | `forecast_gates.min_confidence` | Ensemble confidence floor |
 | `forecast_gates.max_disagreement_pp` | Max model disagreement before NO TRADE |
