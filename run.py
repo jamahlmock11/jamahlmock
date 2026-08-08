@@ -143,15 +143,20 @@ class V6Scanner:
                 vol=vol,
                 options_prob=options_prob,
                 now=now,
+                spot_source=spot_snap.source,
+                spot_is_official=spot_snap.is_official,
             )
             candidate = V6TradeCandidate(ticker=ticker, decision=decision)
             if decision.verdict != "NO_TRADE":
                 trades.append(candidate)
             else:
                 no_trades.append(candidate)
-                for b in decision.blockers:
-                    key = b.split(":")[0].split("(")[0].strip()
-                    blocker_counts[key] += 1
+                primary = (
+                    decision.audit_record.primary_rejection.value
+                    if decision.audit_record
+                    else (decision.blockers[0] if decision.blockers else "UNKNOWN")
+                )
+                blocker_counts[primary] += 1
 
         trades.sort(key=lambda c: c.decision.strict_gap_dollars, reverse=True)
         top_blockers = blocker_counts.most_common(8)
@@ -251,26 +256,69 @@ def _print_trades(candidates: list[V6TradeCandidate], top: int) -> None:
     console.print(table)
 
 
+def _print_opportunity_monitor(candidates: list[V6TradeCandidate]) -> None:
+    """Dashboard row per evaluated market."""
+    if not candidates:
+        return
+    table = Table(title="Opportunity Monitor (both sides evaluated)")
+    table.add_column("Ticker")
+    table.add_column("t_rem")
+    table.add_column("Model↑")
+    table.add_column("YES¢")
+    table.add_column("YES net")
+    table.add_column("NO¢")
+    table.add_column("NO net")
+    table.add_column("Conf")
+    table.add_column("Tier")
+    table.add_column("Decision")
+    table.add_column("Reason")
+    for c in candidates:
+        d = c.decision
+        audit = d.audit_record
+        if audit:
+            table.add_row(
+                c.ticker[-20:],
+                f"{audit.minutes_to_expiry:.1f}m",
+                f"{audit.model_prob_up*100:.0f}%",
+                f"{(audit.yes_ask or 0)*100:.0f}",
+                f"{audit.yes_side.net_edge_dollars*100:+.0f}",
+                f"{(audit.no_ask or 0)*100:.0f}",
+                f"{audit.no_side.net_edge_dollars*100:+.0f}",
+                f"{audit.model_confidence*100:.0f}%",
+                audit.setup_tier,
+                audit.verdict,
+                audit.primary_rejection.value,
+            )
+    console.print(table)
+
+
 def _print_near_misses(candidates: list[V6TradeCandidate], top: int) -> None:
     near = [
         c for c in candidates
-        if c.decision.strict_gap_dollars > 0.05 or c.decision.model_probability > 0.55
+        if c.decision.audit_record
+        and (
+            c.decision.audit_record.best_net_edge > 0.03
+            or c.decision.model_probability > 0.45
+        )
     ][:top]
     if not near:
         return
     table = Table(title="Near misses (NO TRADE)")
     table.add_column("Ticker")
     table.add_column("Model")
-    table.add_column("Gap ¢")
-    table.add_column("Top blocker")
+    table.add_column("Best net¢")
+    table.add_column("Tier")
+    table.add_column("Primary rejection")
     for c in near:
-        d = c.decision
-        blocker = d.blockers[0] if d.blockers else "-"
+        audit = c.decision.audit_record
+        if not audit:
+            continue
         table.add_row(
             c.ticker,
-            f"{d.model_probability*100:.1f}%",
-            f"{d.strict_gap_dollars*100:.0f}",
-            blocker[:55],
+            f"{audit.model_prob_up*100:.1f}%",
+            f"{audit.best_net_edge*100:.0f}",
+            audit.setup_tier,
+            audit.primary_rejection.value,
         )
     console.print(table)
 
@@ -342,17 +390,23 @@ def run_v6_once(
         result = scanner.scan(smile)
 
         _print_header(result)
+        _print_opportunity_monitor(result.trades + result.no_trades)
         _print_trades(result.trades, top)
         _print_near_misses(result.no_trades, top)
 
         if result.top_blockers:
-            console.print("Blocker frequency:")
+            console.print("Primary rejection frequency:")
             for name, count in result.top_blockers:
                 console.print(f"  {count:4d}  {name}")
 
+        # Show detailed audit for best near-miss
+        if result.no_trades and result.no_trades[0].decision.audit_record:
+            console.print("\n[dim]Sample audit record:[/dim]")
+            console.print(result.no_trades[0].decision.audit_record.summary_text())
+
         _print_verdict(result)
 
-        if execute and result.trades:
+        if execute and result.trades and config.v6.live_trading_enabled:
             for c in result.trades:
                 mis = v6_to_mispricing(c.ticker, c.decision)
                 if mis is None:
@@ -361,6 +415,8 @@ def run_v6_once(
                 if size > 0:
                     executor.execute(mis, size, ignore_cooldown=True)
                     logger.info("executed %s %s x%d", c.decision.verdict, c.ticker, size)
+        elif execute and result.trades and not config.v6.live_trading_enabled:
+            console.print("[yellow]Trades found but live_trading_enabled=false — paper only[/yellow]")
 
         return result
     finally:
@@ -391,7 +447,7 @@ def run_v6_loop(
                     except Exception:
                         smile = None
                 result = scanner.scan(smile)
-                if result.trades:
+                if result.trades and config.v6.live_trading_enabled:
                     best = result.trades[0]
                     if execute:
                         mis = v6_to_mispricing(best.ticker, best.decision)
@@ -411,6 +467,82 @@ def run_v6_loop(
         client.close()
 
 
+def collect_diagnostics(
+    *,
+    target: int = 100,
+    interval: float = 3.0,
+    max_iterations: int = 500,
+    allow_synthetic_smile: bool = False,
+) -> None:
+    """Paper-mode diagnostic collection until target evaluations reached."""
+    settings, config, client, engine, scanner, _executor = build_v6_runtime()
+    monitor = engine.get_monitor()
+    collected = 0
+    iterations = 0
+    smile = None
+    try:
+        while collected < target and iterations < max_iterations:
+            iterations += 1
+            try:
+                if smile is None:
+                    try:
+                        smile = load_ibit_smile(config.smile, allow_synthetic=allow_synthetic_smile)
+                    except Exception:
+                        smile = None
+                result = scanner.scan(smile)
+                n = len(result.trades) + len(result.no_trades)
+                collected = monitor.rejection_breakdown().total_evaluations
+                logger.info(
+                    "collect iter=%d batch=%d total=%d/%d",
+                    iterations,
+                    n,
+                    collected,
+                    target,
+                )
+            except Exception:
+                logger.exception("collect iteration %d failed", iterations)
+            time.sleep(interval)
+    finally:
+        client.close()
+
+    breakdown = monitor.rejection_breakdown()
+    console.print(Panel(breakdown.summary_text(), title="Diagnostic Collection Complete"))
+    edge_dist = monitor.edge_distribution()
+    console.print("Edge distribution (best net edge per eval):")
+    for bucket, count in edge_dist.items():
+        console.print(f"  {bucket}: {count}")
+    tier_hyp = monitor.tier_hypothetical_breakdown()
+    tier_edge_only = monitor.hypothetical_trades_by_tier()
+    filter_attr = monitor.filter_attribution()
+    if tier_hyp or tier_edge_only:
+        console.print("Hypothetical tier qualifications:")
+        for tier, count in sorted(tier_hyp.items()):
+            console.print(f"  {tier}: {count}")
+    if tier_edge_only:
+        console.print("If model block removed (edge-only tiers):")
+        for tier, count in sorted(tier_edge_only.items()):
+            console.print(f"  {tier}: {count}")
+    if filter_attr:
+        console.print("Filter failure attribution:")
+        for name, count in sorted(filter_attr.items(), key=lambda x: -x[1]):
+            console.print(f"  {name}: {count}")
+    report_path = "data/diagnostics/rejection_report.json"
+    monitor.export_report(report_path)
+    console.print(f"\nFull report saved to {report_path}")
+
+
+def print_diagnostic_report() -> None:
+    """Print rejection breakdown from stored evaluations."""
+    from kalshi_bot.strategy.opportunity_monitor import OpportunityMonitor
+
+    config = load_config()
+    monitor = OpportunityMonitor(config.v6.diagnostics_db_path)
+    breakdown = monitor.rejection_breakdown()
+    console.print(Panel(breakdown.summary_text(), title="Rejection Breakdown"))
+    console.print("Edge distribution:", monitor.edge_distribution())
+    console.print("Tier hypothetical:", monitor.tier_hypothetical_breakdown())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=f"{WORKFLOW_NAME} {WORKFLOW_VERSION}",
@@ -427,7 +559,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--execute", action="store_true", help="Execute trades (paper/live per config)")
     parser.add_argument("--allow-synthetic", action="store_true", help="Allow synthetic smile fallback")
     parser.add_argument("--top", type=int, default=10, help="Rows to display")
+    parser.add_argument(
+        "--collect",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Paper diagnostic collection: evaluate N markets",
+    )
+    parser.add_argument("--report", action="store_true", help="Print rejection breakdown report")
     args = parser.parse_args(argv)
+
+    if args.report:
+        print_diagnostic_report()
+        return
+
+    if args.collect:
+        collect_diagnostics(target=args.collect, interval=args.interval or 3.0)
+        return
 
     if not load_config().v6.enabled:
         console.print("[red]V6 workflow disabled in config (v6.enabled=false)[/red]")

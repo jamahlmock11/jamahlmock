@@ -69,12 +69,25 @@ class ForecastGateConfig(BaseModel):
     deep_itm_extra_edge_pp: float = 8.0
 
 
+class TierEdgeConfig(BaseModel):
+    """Multi-tier edge thresholds — paper analysis by default."""
+
+    enabled_for_live: bool = False
+    min_edge_a_plus: float = 0.22  # 22¢
+    min_edge_a: float = 0.17  # 17¢
+    min_edge_b: float = 0.12  # 12¢
+    min_confidence_a_plus: float = 0.75
+    min_confidence_a: float = 0.65
+    min_confidence_b: float = 0.55
+
+
 class V6Config(BaseModel):
     """Kalshi BTC 15-Min Intelligence V6 settings."""
 
     enabled: bool = True
     series_ticker: str = "KXBTC15M"
-    # STRICT EDGE: market must be ≥20–25¢ below model probability (hard filter).
+    live_trading_enabled: bool = False
+    # STRICT EDGE: market must be ≥20–25¢ below model probability (hard filter for live).
     strict_min_gap_dollars: float = 0.20
     strict_max_gap_dollars: float = 0.25
     min_trades_per_bucket: int = 3
@@ -85,6 +98,7 @@ class V6Config(BaseModel):
     min_pattern_examples: int = 5
     require_pattern_evidence: bool = False
     journal_path: str = "data/v6_trade_journal.db"
+    diagnostics_db_path: str = "data/diagnostics/evaluations.db"
     bankroll_usd: float = 1000.0
     kelly_fraction: float = 0.12
     max_position_usd: float = 75.0
@@ -94,6 +108,8 @@ class V6Config(BaseModel):
     cooldown_after_loss_seconds: float = 120.0
     min_seconds_to_expiry: float = 60.0
     max_seconds_to_expiry: float = 840.0
+    min_open_seconds: float = 30.0  # don't trade in first 30s of new market
+    tiers: TierEdgeConfig = Field(default_factory=TierEdgeConfig)
 
 
 class BotActionConfig(BaseModel):

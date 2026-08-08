@@ -11,6 +11,7 @@ venv/
 .coverage
 htmlcov/
 data/cache/*.json
+data/*.db
 secrets/
 *.key
 .DS_Store

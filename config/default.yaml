@@ -49,6 +49,7 @@ bot_action:
 v6:
   enabled: true
   series_ticker: KXBTC15M
+  live_trading_enabled: false
   strict_min_gap_dollars: 0.20
   strict_max_gap_dollars: 0.25
   min_trades_per_bucket: 3
@@ -59,6 +60,7 @@ v6:
   min_pattern_examples: 5
   require_pattern_evidence: false
   journal_path: data/v6_trade_journal.db
+  diagnostics_db_path: data/diagnostics/evaluations.db
   bankroll_usd: 4.0
   kelly_fraction: 0.12
   max_position_usd: 3.5
@@ -68,6 +70,15 @@ v6:
   cooldown_after_loss_seconds: 120.0
   min_seconds_to_expiry: 60.0
   max_seconds_to_expiry: 840.0
+  min_open_seconds: 30.0
+  tiers:
+    enabled_for_live: false
+    min_edge_a_plus: 0.22
+    min_edge_a: 0.17
+    min_edge_b: 0.12
+    min_confidence_a_plus: 0.75
+    min_confidence_a: 0.65
+    min_confidence_b: 0.55
 
 smile:
   symbol: IBIT
@@ -82,11 +93,13 @@ smile:
   dividend_yield: 0.0
 
 execution:
-  mode: live
+  mode: paper
   time_in_force: immediate_or_cancel
   use_taker: true
   price_improve_ticks: 0
-  dry_run: false
+  dry_run: true
+
+# Paper trading default — set live_trading_enabled: true AND execution.mode: live to trade real money
 
 scan_interval_seconds: 5.0
 fee_rate: 0.07

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from kalshi_bot.config import V6Config
+from kalshi_bot.strategy.rejection_codes import RejectionCode
 from kalshi_bot.strategy.v6_upgrades import (
     V6IntelligenceEngine,
     assess_market_quality,
@@ -178,9 +179,9 @@ def test_v6_engine_strict_edge_blocks_weak_gap():
     }
     for _ in range(30):
         engine.update_spot(65100.0)
-    decision = engine.evaluate(market, spot=65100.0, vol=0.55, options_prob=0.58)
+    decision = engine.evaluate(market, spot=65100.0, vol=0.55, options_prob=0.58, record_diagnostics=False)
     assert decision.verdict == "NO_TRADE"
-    assert any("strict_edge" in b for b in decision.blockers)
+    assert "EDGE_TOO_SMALL" in decision.blockers or decision.audit_record.primary_rejection == RejectionCode.EDGE_TOO_SMALL
 
 
 def test_v6_engine_passes_large_gap():
@@ -201,9 +202,12 @@ def test_v6_engine_passes_large_gap():
     }
     for _ in range(60):
         engine.update_spot(65200.0)
-    decision = engine.evaluate(market, spot=65200.0, vol=0.55, options_prob=0.65)
+    decision = engine.evaluate(market, spot=65200.0, vol=0.55, options_prob=0.65, record_diagnostics=False)
     # May still NO_TRADE on quality gates, but strict edge should not block
-    strict_blocked = any("strict_edge_fail" in b for b in decision.blockers)
+    if decision.audit_record:
+        strict_blocked = decision.audit_record.primary_rejection == RejectionCode.EDGE_TOO_SMALL
+    else:
+        strict_blocked = "EDGE_TOO_SMALL" in decision.blockers
     if decision.strict_gap_dollars >= 0.20:
         assert not strict_blocked or decision.verdict != "NO_TRADE"
 

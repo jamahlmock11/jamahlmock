@@ -27,6 +27,7 @@ from scipy.stats import norm
 from kalshi_bot.config import V6Config
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
+from kalshi_bot.strategy.rejection_codes import RejectionCode
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,9 @@ def compute_price_action(
         return PriceActionFeatures(0, 0, 0, 0, False, 0, 0, "none")
     p = np.asarray(prices, dtype=float)
     last = float(p[-1])
+    # Need sufficient price variation for breakout detection
+    unique_prices = len(np.unique(np.round(p, 2)))
+    can_detect_breakout = unique_prices >= 5 and len(p) >= 10
     vw = vwap if vwap is not None else float(np.mean(p))
     vwap_dist = (last - vw) / vw if vw > 0 else 0.0
 
@@ -201,14 +205,15 @@ def compute_price_action(
     support = float(np.min(p[-window_support:]))
     resistance = float(np.max(p[-window_support:]))
     breakout = "none"
-    if last > resistance * 0.999 and m15 < 0:
-        breakout = "fake_breakout"
-    elif last > resistance * 0.999:
-        breakout = "breakout"
-    elif last < support * 1.001 and m15 > 0:
-        breakout = "fake_breakout"
-    elif last < support * 1.001:
-        breakout = "breakout"
+    if can_detect_breakout:
+        if last > resistance * 0.999 and m15 < 0:
+            breakout = "fake_breakout"
+        elif last > resistance * 0.999:
+            breakout = "breakout"
+        elif last < support * 1.001 and m15 > 0:
+            breakout = "fake_breakout"
+        elif last < support * 1.001:
+            breakout = "breakout"
 
     return PriceActionFeatures(
         vwap_distance=vwap_dist,
@@ -688,12 +693,13 @@ class V6Decision:
     calibrated: bool
     pattern_examples: int
     pattern_win_rate: float | None
-    quality: MarketQuality
-    ensemble: EnsembleAgreement
-    micro: MicrostructureSnapshot
+    quality: MarketQuality | None
+    ensemble: EnsembleAgreement | None
+    micro: MicrostructureSnapshot | None
     reasons: tuple[str, ...]
     blockers: tuple[str, ...]
     contracts: int = 0
+    audit_record: Any | None = None
 
 
 class V6IntelligenceEngine:
@@ -709,6 +715,14 @@ class V6IntelligenceEngine:
         self._price_history: deque[float] = deque(maxlen=120)
         self._prev_spread: float | None = None
         self._prev_depth: tuple[float, float] | None = None
+        self._monitor: Any | None = None  # OpportunityMonitor, lazy init
+
+    def get_monitor(self) -> Any:
+        from kalshi_bot.strategy.opportunity_monitor import OpportunityMonitor
+
+        if self._monitor is None:
+            self._monitor = OpportunityMonitor(self.config.diagnostics_db_path)
+        return self._monitor
 
     def update_spot(self, price: float) -> None:
         self._price_history.append(price)
@@ -721,7 +735,72 @@ class V6IntelligenceEngine:
         vol: float,
         options_prob: float | None = None,
         now: datetime | None = None,
+        spot_source: str = "unknown",
+        spot_is_official: bool = False,
+        record_diagnostics: bool = True,
     ) -> V6Decision:
+        """Evaluate market; returns V6Decision backed by full audit record."""
+        from kalshi_bot.strategy.v6_evaluator import evaluate_market_audited
+
+        audit = evaluate_market_audited(
+            self,
+            market,
+            spot=spot,
+            spot_source=spot_source,
+            spot_is_official=spot_is_official,
+            vol=vol,
+            options_prob=options_prob,
+            now=now,
+        )
+        if record_diagnostics:
+            self.get_monitor().record(audit)
+
+        return V6Decision(
+            verdict=audit.verdict,
+            model_probability=audit.model_prob_up,
+            market_price=(
+                audit.yes_side.executable_ask
+                if audit.verdict == "TRADE_YES"
+                else audit.no_side.executable_ask
+                if audit.verdict == "TRADE_NO"
+                else None
+            ),
+            strict_gap_dollars=max(
+                audit.yes_side.raw_edge_dollars, audit.no_side.raw_edge_dollars
+            ),
+            confidence=audit.model_confidence,
+            explainability=audit.explainability,
+            regime=Regime(audit.regime) if audit.regime in {r.value for r in Regime} else Regime.CHOP,
+            monte_carlo_prob=audit.monte_carlo_prob,
+            calibrated=audit.calibrated,
+            pattern_examples=0,
+            pattern_win_rate=None,
+            quality=None,
+            ensemble=None,
+            micro=None,
+            reasons=(
+                f"tier={audit.setup_tier}",
+                f"score={audit.opportunity_score}",
+                f"best_side={audit.best_side}",
+                f"best_net={audit.best_net_edge*100:.1f}¢",
+            ),
+            blockers=tuple(
+                c.value for c in audit.all_rejection_codes if c != RejectionCode.NONE
+            ),
+            contracts=audit.contracts,
+            audit_record=audit,
+        )
+
+    def evaluate_legacy(
+        self,
+        market: dict,
+        *,
+        spot: float,
+        vol: float,
+        options_prob: float | None = None,
+        now: datetime | None = None,
+    ) -> V6Decision:
+        """Legacy evaluate path (pre-audit). Prefer evaluate()."""
         now = now or datetime.now(timezone.utc)
         self.update_spot(spot)
         ticker = str(market.get("ticker") or "")
