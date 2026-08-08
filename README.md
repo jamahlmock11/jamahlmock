@@ -24,8 +24,10 @@ For each open hourly contract “YES if BRTI settles ≥ K”:
    - **≥15pp** → Only if other signals confirm (elevated confidence / low disagreement)
    - **<15pp** → No trade
 4. Compute **conservative post-fee EV** (uses forecast uncertainty band, not the mean alone)
-5. Apply hard gates (spread, volume, horizon, confidence, disagreement, min edge)
+5. Apply hard gates (spread, volume, **last-20-minute entry window**, confidence, disagreement, min edge)
 6. If any gate fails → **NO TRADE**
+
+**Timing:** the bot does **not** enter during the first ~40 minutes of an hourly contract. Entries are allowed only when **≤20 minutes** remain until expiry (and still above the 2-minute floor).
 
 Reference matrix at model probability = 60%:
 
@@ -103,6 +105,8 @@ Config knobs that matter for PnL / accuracy:
 | `bot_action.strong_buy_min_gap_pp` | Raw gap (≥20pp) → Strong BUY candidate |
 | `bot_action.conditional_min_gap_pp` | Raw gap (≥15pp) → conditional; below → No trade |
 | `bot_action.conditional_min_confidence` | Extra confirmation floor for conditional tier |
+| `forecast_gates.max_seconds_to_expiry` | Last-N-minute entry window (default **1200s = 20m**) |
+| `forecast_gates.min_seconds_to_expiry` | Too-close floor (default 120s) |
 | `forecast_gates.min_edge_pp` | Minimum **conservative** post-fee edge (pp) |
 | `forecast_gates.min_confidence` | Ensemble confidence floor |
 | `forecast_gates.max_disagreement_pp` | Max model disagreement before NO TRADE |

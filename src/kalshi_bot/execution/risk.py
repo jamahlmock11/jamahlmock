@@ -65,6 +65,9 @@ class RiskManager:
             return False, "already_traded_ticker"
         if mis.seconds_to_expiry < risk.min_seconds_to_expiry:
             return False, "too_close_to_expiry"
+        # Hourly markets: refuse entries outside the last-20-minute window.
+        if mis.series == "KXBTCD" and mis.seconds_to_expiry > risk.max_seconds_to_expiry_1h:
+            return False, "outside_last_20m_window"
         # Extreme probs rarely have real edge after microstructure
         if mis.options_prob < 0.03 or mis.options_prob > 0.97:
             return False, "prob_extreme"

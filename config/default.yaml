@@ -19,7 +19,8 @@ risk:
   cooldown_seconds: 5.0
   min_seconds_to_expiry: 120.0
   max_seconds_to_expiry_15m: 840
-  max_seconds_to_expiry_1h: 3300
+  # Hourly markets: execute only in the last 20 minutes (skip first ~40m).
+  max_seconds_to_expiry_1h: 1200
 
 forecast_gates:
   min_confidence: 0.60
@@ -28,7 +29,8 @@ forecast_gates:
   max_spread: 0.06
   min_volume: 50.0
   min_seconds_to_expiry: 120.0
-  max_seconds_to_expiry: 3300
+  # Last-20-minute entry window only (do not trade earlier in the hour).
+  max_seconds_to_expiry: 1200
   hourly_only: true
   proxy_spot_edge_multiplier: 1.5
   proxy_spot_confidence_penalty: 0.30
