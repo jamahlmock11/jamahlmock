@@ -269,7 +269,8 @@ def _print_opportunity_monitor(candidates: list[V6TradeCandidate]) -> None:
     table.add_column("NO¢")
     table.add_column("NO net")
     table.add_column("Conf")
-    table.add_column("Tier")
+    table.add_column("Edge tier")
+    table.add_column("Action")
     table.add_column("Decision")
     table.add_column("Reason")
     for c in candidates:
@@ -285,7 +286,8 @@ def _print_opportunity_monitor(candidates: list[V6TradeCandidate]) -> None:
                 f"{(audit.no_ask or 0)*100:.0f}",
                 f"{audit.no_side.net_edge_dollars*100:+.0f}",
                 f"{audit.model_confidence*100:.0f}%",
-                audit.setup_tier,
+                audit.edge_quality,
+                audit.edge_action[:30],
                 audit.verdict,
                 audit.primary_rejection.value,
             )

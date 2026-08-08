@@ -16,10 +16,12 @@ from kalshi_bot.strategy.decision_record import (
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
 from kalshi_bot.strategy.rejection_codes import RejectionCode
 from kalshi_bot.strategy.tiered_edge import (
-    SetupTier,
+    EdgeQuality,
+    classify_edge_quality,
     classify_tier,
     estimate_slippage,
     opportunity_score,
+    should_trade_for_quality,
 )
 from kalshi_bot.strategy.v6_upgrades import (
     V6IntelligenceEngine,
@@ -337,8 +339,8 @@ def evaluate_market_audited(
             )
         )
 
-    # --- Both sides evaluated independently ---
-    min_edge = config.strict_min_gap_dollars
+    # --- Both sides evaluated independently (10¢ floor) ---
+    min_edge = config.tiers.edge_experimental
     yes_side = _evaluate_side(
         side="YES",
         model_prob=model_prob,
@@ -373,23 +375,25 @@ def evaluate_market_audited(
             best_eval = ev
             best_side = name
 
-    # Hard blockers that prevent ANY trade
+    # Hard blockers — risk/timing/data only (NOT model conflict)
     hard_blockers = {
         RejectionCode.KILL_SWITCH,
         RejectionCode.RISK_LIMIT,
         RejectionCode.COOLDOWN,
         RejectionCode.TIMING_RESTRICTION,
         RejectionCode.MISSING_DATA,
-        RejectionCode.MANIPULATION_SUSPECTED,
     }
     has_hard_block = bool(hard_blockers & set(all_rejections))
 
-    # Model conflict is a hard blocker in current strategy
-    if RejectionCode.MODEL_CONFLICT in all_rejections:
-        has_hard_block = True
-
-    # Tier classification (paper analysis)
+    # Edge quality tier (separates frequency from quality)
     best_net_for_tier = best_eval.net_edge_dollars if best_eval else 0.0
+    best_raw = best_eval.raw_edge_dollars if best_eval else 0.0
+    edge_quality = classify_edge_quality(
+        best_net_for_tier,
+        raw_edge_dollars=best_raw,
+        config=config.tiers,
+    )
+
     tier_result = classify_tier(
         net_edge_dollars=best_net_for_tier,
         model_confidence=ensemble.agreement_score,
@@ -412,33 +416,44 @@ def evaluate_market_audited(
         model_agrees=ensemble.models_agree,
     )
 
-    # --- Final verdict ---
+    # --- Final verdict via edge quality tier ---
     verdict = "NO_TRADE"
     contracts = 0
     side_rejections: list[RejectionCode] = []
+    trade_reason = ""
 
     if not has_hard_block and best_eval and best_side:
-        side_rejections = list(best_eval.rejection_codes)
-        quality_soft_block = (
-            RejectionCode.QUALITY_SCORE_TOO_HIGH in all_rejections
-            or RejectionCode.FAKE_BREAKOUT in all_rejections
+        net_ev_ok = best_eval.passes_net_ev
+        can_trade, trade_reason = should_trade_for_quality(
+            edge_quality,
+            model_confidence=ensemble.agreement_score,
+            model_agrees=ensemble.models_agree,
+            data_fresh=spot_is_official,
+            liquidity_ok=liq_ok,
+            spread_ok=spread_ok,
+            no_manipulation=not manip,
+            net_ev_positive=net_ev_ok,
+            config=config.tiers,
         )
 
-        # Live uses strict 20¢ gate; paper tiers available when tiers.enabled_for_live
-        edge_ok = best_eval.passes_edge_threshold and best_eval.passes_net_ev
-        tier_ok = tier_result.qualifies and config.tiers.enabled_for_live
-
-        if edge_ok and not quality_soft_block:
+        if can_trade and config.tiers.enabled_for_live:
             verdict = f"TRADE_{best_side}"
-        elif tier_ok and not quality_soft_block:
-            verdict = f"TRADE_{best_side}"
-        else:
-            all_rejections.extend(side_rejections)
+        elif not can_trade:
+            if edge_quality.quality == EdgeQuality.NO_TRADE:
+                all_rejections.append(RejectionCode.EDGE_TOO_SMALL)
+            elif not ensemble.models_agree and edge_quality.requires_confirmation:
+                all_rejections.append(RejectionCode.MODEL_CONFLICT)
+            elif not net_ev_ok:
+                all_rejections.append(RejectionCode.EXPECTED_VALUE_NEGATIVE)
+            else:
+                all_rejections.append(RejectionCode.LOW_CONFIDENCE)
+            side_rejections = list(best_eval.rejection_codes)
 
     if verdict == "NO_TRADE":
+        if not side_rejections and best_eval:
+            side_rejections = list(best_eval.rejection_codes)
         all_rejections.extend(side_rejections)
-        # If no side-specific rejection, use edge
-        if not side_rejections and best_eval and not best_eval.passes_edge_threshold:
+        if edge_quality.quality == EdgeQuality.NO_TRADE and RejectionCode.EDGE_TOO_SMALL not in all_rejections:
             all_rejections.append(RejectionCode.EDGE_TOO_SMALL)
 
     primary = pick_primary_rejection(all_rejections) if verdict == "NO_TRADE" else RejectionCode.NONE
@@ -452,12 +467,15 @@ def evaluate_market_audited(
 
     if verdict != "NO_TRADE" and best_eval and best_eval.executable_ask:
         prob = model_prob if best_side == "YES" else 1.0 - model_prob
-        contracts = engine.risk.kelly_size(
+        base_contracts = engine.risk.kelly_size(
             prob=prob,
             price=best_eval.executable_ask,
             bankroll=config.bankroll_usd,
             confidence=explain,
         )
+        contracts = max(0, int(base_contracts * edge_quality.size_multiplier))
+        if edge_quality.quality == EdgeQuality.EXPERIMENTAL:
+            contracts = min(contracts, config.tiers.experimental_max_contracts)
 
     return MarketEvaluationRecord(
         ticker=ticker,
@@ -494,11 +512,14 @@ def evaluate_market_audited(
         data_freshness=data_freshness,
         filter_checks=filter_checks,
         all_rejection_codes=list(dict.fromkeys(all_rejections)),
-        setup_tier=tier_result.tier.value,
+        setup_tier=edge_quality.quality.value,
         opportunity_score=opp_score,
         verdict=verdict,
         primary_rejection=primary,
         contracts=contracts,
         regime=regime.value,
         explainability=explain,
+        edge_quality=edge_quality.quality.value,
+        edge_action=edge_quality.action_label,
+        trade_reason=trade_reason,
     )

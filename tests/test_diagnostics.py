@@ -7,7 +7,7 @@ import pytest
 from kalshi_bot.config import TierEdgeConfig, V6Config
 from kalshi_bot.strategy.decision_record import pick_primary_rejection
 from kalshi_bot.strategy.rejection_codes import RejectionCode
-from kalshi_bot.strategy.tiered_edge import SetupTier, classify_tier, estimate_slippage
+from kalshi_bot.strategy.tiered_edge import SetupTier, classify_tier, classify_edge_quality, estimate_slippage
 from kalshi_bot.strategy.v6_evaluator import _evaluate_side
 from kalshi_bot.strategy.v6_upgrades import V6IntelligenceEngine
 
@@ -47,29 +47,11 @@ def test_evaluate_side_net_edge_includes_fees():
 
 def test_tier_classification():
     cfg = TierEdgeConfig()
-    a_plus = classify_tier(
-        net_edge_dollars=0.25,
-        model_confidence=0.80,
-        data_fresh=True,
-        liquidity_ok=True,
-        spread_ok=True,
-        model_agrees=True,
-        no_conflicts=True,
-        config=cfg,
-    )
-    assert a_plus.tier == SetupTier.A_PLUS
+    exceptional = classify_edge_quality(0.28, config=cfg)
+    assert exceptional.quality.value == "EXCEPTIONAL"
 
-    below = classify_tier(
-        net_edge_dollars=0.08,
-        model_confidence=0.80,
-        data_fresh=True,
-        liquidity_ok=True,
-        spread_ok=True,
-        model_agrees=True,
-        no_conflicts=True,
-        config=cfg,
-    )
-    assert below.tier == SetupTier.NONE
+    below = classify_edge_quality(0.08, config=cfg)
+    assert below.quality.value == "NO_TRADE"
 
 
 def test_audited_evaluation_produces_record():

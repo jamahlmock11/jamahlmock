@@ -12,6 +12,7 @@ venv/
 htmlcov/
 data/cache/*.json
 data/*.db
+data/diagnostics/
 secrets/
 *.key
 .DS_Store

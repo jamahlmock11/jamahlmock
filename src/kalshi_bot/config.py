@@ -70,12 +70,26 @@ class ForecastGateConfig(BaseModel):
 
 
 class TierEdgeConfig(BaseModel):
-    """Multi-tier edge thresholds — paper analysis by default."""
+    """Edge quality tiers — separate frequency from quality."""
 
-    enabled_for_live: bool = False
-    min_edge_a_plus: float = 0.22  # 22¢
-    min_edge_a: float = 0.17  # 17¢
-    min_edge_b: float = 0.12  # 12¢
+    enabled_for_live: bool = True
+    # Net-edge band floors (dollars)
+    edge_exceptional: float = 0.25   # ≥25¢
+    edge_strong: float = 0.20        # 20–25¢
+    edge_conditional: float = 0.15   # 15–20¢
+    edge_experimental: float = 0.10  # 10–15¢; below = no trade
+    # Confirmation for CONDITIONAL (15–20¢) tier
+    conditional_min_confidence: float = 0.70
+    # Position size multipliers by tier (applied to Kelly)
+    size_multiplier_exceptional: float = 1.0
+    size_multiplier_strong: float = 1.0
+    size_multiplier_conditional: float = 0.75
+    size_multiplier_experimental: float = 0.50
+    experimental_max_contracts: int = 1
+    # Legacy aliases (diagnostics)
+    min_edge_a_plus: float = 0.25
+    min_edge_a: float = 0.20
+    min_edge_b: float = 0.10
     min_confidence_a_plus: float = 0.75
     min_confidence_a: float = 0.65
     min_confidence_b: float = 0.55
@@ -87,9 +101,8 @@ class V6Config(BaseModel):
     enabled: bool = True
     series_ticker: str = "KXBTC15M"
     live_trading_enabled: bool = False
-    # STRICT EDGE: market must be ≥20–25¢ below model probability (hard filter for live).
-    strict_min_gap_dollars: float = 0.20
-    strict_max_gap_dollars: float = 0.25
+    # Minimum net edge floor for any consideration (10¢ experimental band).
+    strict_min_gap_dollars: float = 0.10
     min_trades_per_bucket: int = 3
     monte_carlo_sims: int = 5000
     max_spread: float = 0.08

@@ -105,6 +105,9 @@ class MarketEvaluationRecord:
     contracts: int = 0
     regime: str = ""
     explainability: float = 0.0
+    edge_quality: str = "NO_TRADE"
+    edge_action: str = "🔴 No trade"
+    trade_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -158,7 +161,8 @@ class MarketEvaluationRecord:
             f"TIMING:    {self.minutes_to_expiry:.1f}m remaining",
             f"CONFIDENCE: {self.model_confidence * 100:.0f}%",
             "",
-            f"TIER: {self.setup_tier}  |  OPPORTUNITY SCORE: {self.opportunity_score:.2f}",
+            f"TIER: {self.setup_tier}  |  {self.edge_action}",
+            f"OPPORTUNITY SCORE: {self.opportunity_score:.2f}",
             "",
             f"FINAL: {self.verdict}",
             f"REASON: {self.primary_rejection.value}",

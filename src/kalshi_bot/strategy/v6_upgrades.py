@@ -779,7 +779,8 @@ class V6IntelligenceEngine:
             ensemble=None,
             micro=None,
             reasons=(
-                f"tier={audit.setup_tier}",
+                f"{audit.edge_action}",
+                f"tier={audit.edge_quality}",
                 f"score={audit.opportunity_score}",
                 f"best_side={audit.best_side}",
                 f"best_net={audit.best_net_edge*100:.1f}¢",
