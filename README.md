@@ -121,4 +121,5 @@ Legacy options-only mispricing remains available via `kalshi-scan` / `kalshi-bot
 
 - **Fail closed:** missing data, synthetic smiles, stale smiles, thin books, or model conflict → NO TRADE
 - **Hourly only:** daily KXBTCD buckets are filtered out when `hourly_only: true`
+- **Last 20 minutes only:** no entries until ≤20m remain on the hourly contract
 - **Conservative EV:** trades must clear the edge using the uncertainty band, not just the point estimate
