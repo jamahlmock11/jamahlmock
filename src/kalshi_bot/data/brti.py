@@ -1,13 +1,16 @@
-"""BRTI spot resolution with public fallbacks."""
+"""BRTI spot resolution with CF Benchmarks official sources and fallbacks."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
 import httpx
 import yfinance as yf
 
+from kalshi_bot.config import BrtiConfig, Settings
+from kalshi_bot.data.cfbenchmarks import fetch_brti_direct_api, fetch_brti_public_summary
 from kalshi_bot.data.kalshi_client import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,7 @@ class SpotSnapshot:
     brti: float
     source: str
     is_official: bool
+    updated_at: datetime | None = None
 
 
 def _kraken_btc() -> float:
@@ -32,15 +36,61 @@ def _coinbase_btc() -> float:
     return float(data["data"]["amount"])
 
 
-def resolve_spot(client: KalshiClient, fallback_btc: float | None = None) -> SpotSnapshot:
-    """Prefer authenticated CF Benchmarks BRTI; else public BTC proxy.
+def _quote_to_snapshot(quote) -> SpotSnapshot:
+    return SpotSnapshot(
+        brti=quote.value,
+        source=quote.source,
+        is_official=quote.is_official,
+        updated_at=quote.updated_at,
+    )
 
-    Settlement is on BRTI 60s average. Using a proxy is fine for scanning,
-    but live trading should use the official passthrough.
+
+def resolve_spot(
+    client: KalshiClient,
+    fallback_btc: float | None = None,
+    *,
+    brti_cfg: BrtiConfig | None = None,
+    settings: Settings | None = None,
+) -> SpotSnapshot:
+    """Resolve BRTI for both 15m and 1h bots.
+
+    Priority:
+    1. Kalshi authenticated CF Benchmarks passthrough
+    2. Direct CF Benchmarks API credentials (if configured)
+    3. Public CF Benchmarks BRTI page summary (official displayed RTI)
+    4. Exchange BTC proxies (scanning only; not settlement grade)
     """
-    brti = client.get_brti()
-    if brti is not None and brti > 0:
-        return SpotSnapshot(brti=brti, source="cfbenchmarks_brti", is_official=True)
+    cfg = brti_cfg or BrtiConfig()
+    settings = settings or Settings()
+
+    if cfg.prefer_official:
+        brti = client.get_brti()
+        if brti is not None and brti > 0:
+            return SpotSnapshot(brti=brti, source="cfbenchmarks_kalshi_passthrough", is_official=True)
+
+        username = settings.cf_benchmarks_api_username or cfg.cf_benchmarks_username
+        api_key = settings.cf_benchmarks_api_key or cfg.cf_benchmarks_api_key
+        if username and api_key:
+            quote = fetch_brti_direct_api(
+                username=username,
+                api_key=api_key,
+                index_id=cfg.index_id,
+            )
+            if quote is not None:
+                return _quote_to_snapshot(quote)
+
+        if cfg.public_summary_enabled:
+            quote = fetch_brti_public_summary(index_id=cfg.index_id)
+            if quote is not None:
+                logger.info(
+                    "using official CF Benchmarks BRTI from %s (%.2f)",
+                    quote.source,
+                    quote.value,
+                )
+                return _quote_to_snapshot(quote)
+
+    if not cfg.allow_exchange_proxy:
+        raise RuntimeError("official BRTI unavailable and exchange proxy disabled")
 
     for name, fn in (("kraken_xbtusd", _kraken_btc), ("coinbase_btc_usd", _coinbase_btc)):
         try:

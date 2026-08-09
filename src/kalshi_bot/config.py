@@ -22,6 +22,17 @@ class SeriesConfig(BaseModel):
     max_notional_usd: float = 250.0
 
 
+class BrtiConfig(BaseModel):
+    """CF Benchmarks BRTI (Kalshi settlement index) resolution."""
+
+    index_id: str = "BRTI"
+    prefer_official: bool = True
+    public_summary_enabled: bool = True
+    allow_exchange_proxy: bool = True
+    cf_benchmarks_username: str | None = None
+    cf_benchmarks_api_key: str | None = None
+
+
 class RiskConfig(BaseModel):
     bankroll_usd: float = 1000.0
     kelly_fraction: float = 0.15
@@ -154,6 +165,7 @@ class ExecutionConfig(BaseModel):
 
 
 class BotConfig(BaseModel):
+    brti: BrtiConfig = Field(default_factory=BrtiConfig)
     series: list[SeriesConfig] = Field(
         default_factory=lambda: [
             SeriesConfig(ticker="KXBTCD", enabled=True, min_edge_pp=10.0, max_contracts=400),
@@ -181,6 +193,8 @@ class Settings(BaseSettings):
     kalshi_private_key_pem: str | None = None
     kalshi_private_key_path: str | None = None
     kalshi_env: Literal["prod", "demo", "public"] = "public"
+    cf_benchmarks_api_username: str | None = None
+    cf_benchmarks_api_key: str | None = None
     config_path: str = "config/default.yaml"
     log_level: str = "INFO"
 

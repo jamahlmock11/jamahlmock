@@ -64,7 +64,12 @@ Reference matrix at model probability = 60%:
 | 50¢ | 10pp | No trade |
 | 55¢ | 5pp | No trade |
 
-Settlement reference is **CF Benchmarks BRTI** (60-second average into expiry). Authenticated Kalshi credentials unlock the official BRTI passthrough; without them the engine scans on a public BTC proxy (paper mode only).
+Settlement reference is **CF Benchmarks BRTI** (60-second average into expiry). Both bots resolve spot from the official index page/API before falling back to exchange proxies:
+
+1. Kalshi authenticated `/cfbenchmarks` passthrough (if API keys set)
+2. Licensed CF Benchmarks REST API (`CF_BENCHMARKS_API_USERNAME` / `CF_BENCHMARKS_API_KEY`)
+3. Public CF Benchmarks BRTI summary ([cfbenchmarks.com/data/indices/BRTI](https://www.cfbenchmarks.com/data/indices/BRTI))
+4. Kraken/Coinbase proxy (scanning only)
 
 Kalshi quadratic fees are deducted before the threshold check:
 

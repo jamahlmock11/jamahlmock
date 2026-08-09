@@ -1,3 +1,10 @@
+# CF Benchmarks BRTI — official Kalshi settlement index (https://www.cfbenchmarks.com/data/indices/BRTI)
+brti:
+  index_id: BRTI
+  prefer_official: true
+  public_summary_enabled: true
+  allow_exchange_proxy: true
+
 series:
   - ticker: KXBTCD
     enabled: true

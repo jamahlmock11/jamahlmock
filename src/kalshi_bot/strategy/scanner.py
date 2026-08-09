@@ -100,7 +100,11 @@ class MispricingScanner:
         return True
 
     def scan(self, smile: VolSmile, spot_override: float | None = None) -> ScanResult:
-        spot = resolve_spot(self.client, fallback_btc=spot_override or smile.spot_btc)
+        spot = resolve_spot(
+            self.client,
+            fallback_btc=spot_override or smile.spot_btc,
+            brti_cfg=self.config.brti,
+        )
         opportunities: list[Mispricing] = []
         scanned = 0
         now = datetime.now(timezone.utc)
@@ -162,7 +166,7 @@ class ForecastScanner:
 
     def scan(self, smile: VolSmile | None, spot_override: float | None = None) -> ForecastScanResult:
         fallback = spot_override or (smile.spot_btc if smile else None)
-        spot = resolve_spot(self.client, fallback_btc=fallback)
+        spot = resolve_spot(self.client, fallback_btc=fallback, brti_cfg=self.config.brti)
         decisions: list[TradeDecision] = []
         scanned = 0
         now = datetime.now(timezone.utc)

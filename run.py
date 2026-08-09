@@ -94,7 +94,7 @@ class V6Scanner:
     def scan(self, smile: VolSmile | None = None) -> V6ScanResult:
         now = datetime.now(timezone.utc)
         fallback = smile.spot_btc if smile else None
-        spot_snap = resolve_spot(self.client, fallback_btc=fallback)
+        spot_snap = resolve_spot(self.client, fallback_btc=fallback, brti_cfg=self.config.brti)
         spot = spot_snap.brti
         self.engine.update_spot(spot)
 
