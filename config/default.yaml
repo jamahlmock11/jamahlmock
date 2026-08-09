@@ -1,6 +1,6 @@
 series:
   - ticker: KXBTCD
-    enabled: false
+    enabled: true
     min_edge_pp: 10.0
     max_contracts: 400
     max_notional_usd: 200.0
