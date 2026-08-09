@@ -7,15 +7,15 @@ series:
   - ticker: KXBTC15M
     enabled: true
     min_edge_pp: 20.0
-    max_contracts: 5
-    max_notional_usd: 3.5
+    max_contracts: 10
+    max_notional_usd: 12.0
 
 risk:
-  bankroll_usd: 4.0
+  bankroll_usd: 13.75
   kelly_fraction: 0.15
   max_open_positions: 2
-  max_exposure_usd: 3.5
-  max_loss_per_trade_usd: 3.0
+  max_exposure_usd: 12.0
+  max_loss_per_trade_usd: 6.0
   cooldown_seconds: 5.0
   min_seconds_to_expiry: 60.0
   max_seconds_to_expiry_15m: 840
@@ -60,11 +60,11 @@ v6:
   require_pattern_evidence: false
   journal_path: data/v6_trade_journal.db
   diagnostics_db_path: data/diagnostics/evaluations.db
-  bankroll_usd: 4.0
+  bankroll_usd: 13.75
   kelly_fraction: 0.12
-  max_position_usd: 3.5
-  max_exposure_usd: 3.5
-  max_daily_loss_usd: 3.0
+  max_position_usd: 12.0
+  max_exposure_usd: 12.0
+  max_daily_loss_usd: 8.0
   max_consecutive_losses: 4
   cooldown_after_loss_seconds: 120.0
   min_seconds_to_expiry: 60.0

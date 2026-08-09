@@ -194,6 +194,9 @@ def v6_to_mispricing(ticker: str, decision: V6Decision) -> Mispricing | None:
     side = Side.YES if decision.verdict == "TRADE_YES" else Side.NO
     prob = decision.model_probability if side == Side.YES else 1.0 - decision.model_probability
     gap_pp = decision.strict_gap_dollars * 100
+    secs = 0.0
+    if decision.audit_record is not None:
+        secs = decision.audit_record.seconds_to_expiry
     return Mispricing(
         ticker=ticker,
         series="KXBTC15M",
@@ -205,7 +208,7 @@ def v6_to_mispricing(ticker: str, decision: V6Decision) -> Mispricing | None:
         strike=0.0,
         spot=0.0,
         vol=0.0,
-        seconds_to_expiry=0.0,
+        seconds_to_expiry=secs,
         yes_bid=None,
         yes_ask=decision.market_price if side == Side.YES else None,
         implied=None,  # type: ignore[arg-type]
@@ -345,6 +348,33 @@ def _print_verdict(result: V6ScanResult) -> None:
 # Runtime builder
 # ---------------------------------------------------------------------------
 
+def sync_bankroll_from_kalshi(client: KalshiClient, config: BotConfig) -> float | None:
+    """Pull live Kalshi balance and size risk limits from it."""
+    if not client.authenticated:
+        return None
+    try:
+        bal = client.get_balance()
+        raw = bal.get("balance_dollars")
+        if raw is not None:
+            dollars = float(raw)
+        else:
+            dollars = float(bal.get("balance", 0)) / 100.0
+        cap = round(dollars * 0.9, 2)
+        config.risk.bankroll_usd = dollars
+        config.risk.max_exposure_usd = cap
+        config.v6.bankroll_usd = dollars
+        config.v6.max_exposure_usd = cap
+        config.v6.max_position_usd = cap
+        for series in config.series:
+            if series.ticker == config.v6.series_ticker:
+                series.max_notional_usd = cap
+        logger.info("synced bankroll from Kalshi: $%.2f (exposure cap $%.2f)", dollars, cap)
+        return dollars
+    except Exception as exc:
+        logger.warning("could not sync Kalshi balance: %s", exc)
+        return None
+
+
 def build_v6_runtime(
     settings: Settings | None = None,
     *,
@@ -360,6 +390,8 @@ def build_v6_runtime(
         api_key_id=settings.kalshi_api_key_id,
         private_key_pem=settings.resolve_private_key_pem(),
     )
+    if config.v6.live_trading_enabled and config.execution.mode == "live":
+        sync_bankroll_from_kalshi(client, config)
     engine = V6IntelligenceEngine(config.v6, client=client)
     scanner = V6Scanner(client, config, engine)
     risk = RiskManager(config)
