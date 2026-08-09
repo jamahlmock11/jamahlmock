@@ -73,13 +73,19 @@ class TierEdgeConfig(BaseModel):
     """Edge quality tiers — separate frequency from quality."""
 
     enabled_for_live: bool = True
-    # Net-edge band floors (dollars)
-    edge_exceptional: float = 0.25   # ≥25¢
-    edge_strong: float = 0.20        # 20–25¢
-    edge_conditional: float = 0.15   # 15–20¢
-    edge_experimental: float = 0.10  # 10–15¢; below = no trade
-    # Confirmation for CONDITIONAL (15–20¢) tier
-    conditional_min_confidence: float = 0.70
+    # Classify tiers on raw edge (before fees) — better for small bankrolls where fees eat net edge.
+    use_raw_edge_for_tiers: bool = True
+    # Net-edge band floors (dollars) when use_raw_edge_for_tiers=false
+    edge_exceptional: float = 0.20   # ≥20¢
+    edge_strong: float = 0.15        # 15–20¢
+    edge_conditional: float = 0.08   # 8–15¢
+    edge_experimental: float = 0.05  # 5–8¢; below = no trade
+    # Minimum net EV after fees (can be slightly negative for experimental on small accounts)
+    min_net_edge_strong: float = 0.0
+    min_net_edge_experimental: float = -0.02
+    # Confirmation for CONDITIONAL tier
+    conditional_min_confidence: float = 0.50
+    conditional_requires_model_agree: bool = False
     # Position size multipliers by tier (applied to Kelly)
     size_multiplier_exceptional: float = 1.0
     size_multiplier_strong: float = 1.0
@@ -87,12 +93,12 @@ class TierEdgeConfig(BaseModel):
     size_multiplier_experimental: float = 0.50
     experimental_max_contracts: int = 1
     # Legacy aliases (diagnostics)
-    min_edge_a_plus: float = 0.25
-    min_edge_a: float = 0.20
-    min_edge_b: float = 0.10
-    min_confidence_a_plus: float = 0.75
-    min_confidence_a: float = 0.65
-    min_confidence_b: float = 0.55
+    min_edge_a_plus: float = 0.20
+    min_edge_a: float = 0.15
+    min_edge_b: float = 0.05
+    min_confidence_a_plus: float = 0.65
+    min_confidence_a: float = 0.55
+    min_confidence_b: float = 0.45
 
 
 class V6Config(BaseModel):
@@ -102,12 +108,12 @@ class V6Config(BaseModel):
     series_ticker: str = "KXBTC15M"
     live_trading_enabled: bool = False
     # Minimum net edge floor for any consideration (10¢ experimental band).
-    strict_min_gap_dollars: float = 0.10
+    strict_min_gap_dollars: float = 0.05
     min_trades_per_bucket: int = 3
     monte_carlo_sims: int = 5000
-    max_spread: float = 0.08
-    min_liquidity_score: float = 0.15
-    max_model_disagreement_pp: float = 12.0
+    max_spread: float = 0.12
+    min_liquidity_score: float = 0.10
+    max_model_disagreement_pp: float = 28.0
     min_pattern_examples: int = 5
     require_pattern_evidence: bool = False
     journal_path: str = "data/v6_trade_journal.db"

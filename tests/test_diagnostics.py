@@ -50,7 +50,7 @@ def test_tier_classification():
     exceptional = classify_edge_quality(0.28, config=cfg)
     assert exceptional.quality.value == "EXCEPTIONAL"
 
-    below = classify_edge_quality(0.08, config=cfg)
+    below = classify_edge_quality(0.04, config=cfg)
     assert below.quality.value == "NO_TRADE"
 
 

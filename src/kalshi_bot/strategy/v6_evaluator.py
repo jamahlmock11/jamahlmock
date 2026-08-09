@@ -275,13 +275,13 @@ def evaluate_market_audited(
         )
 
     if not ensemble.models_agree:
-        all_rejections.append(RejectionCode.MODEL_CONFLICT)
+        # Diagnostic only — not a hard block (model conflict handled per tier).
         filter_checks.append(
             FilterCheck(
                 "model_agreement",
                 False,
                 RejectionCode.MODEL_CONFLICT,
-                f"disagreement={ensemble.consensus_prob:.2f} spread across models",
+                f"disagreement across models",
             )
         )
     else:
@@ -294,20 +294,8 @@ def evaluate_market_audited(
         )
 
     if pa.breakout_signal == "fake_breakout":
-        all_rejections.append(RejectionCode.FAKE_BREAKOUT)
         filter_checks.append(
             FilterCheck("breakout", False, RejectionCode.FAKE_BREAKOUT)
-        )
-
-    if not quality.tradeable:
-        all_rejections.append(RejectionCode.QUALITY_SCORE_TOO_HIGH)
-        filter_checks.append(
-            FilterCheck(
-                "quality_score",
-                False,
-                RejectionCode.QUALITY_SCORE_TOO_HIGH,
-                f"score={quality.do_not_trade_score:.2f}",
-            )
         )
 
     # Risk
@@ -388,6 +376,10 @@ def evaluate_market_audited(
     # Edge quality tier (separates frequency from quality)
     best_net_for_tier = best_eval.net_edge_dollars if best_eval else 0.0
     best_raw = best_eval.raw_edge_dollars if best_eval else 0.0
+
+    if not quality.tradeable and best_raw < config.tiers.edge_conditional:
+        all_rejections.append(RejectionCode.QUALITY_SCORE_TOO_HIGH)
+
     edge_quality = classify_edge_quality(
         best_net_for_tier,
         raw_edge_dollars=best_raw,
@@ -433,6 +425,7 @@ def evaluate_market_audited(
             spread_ok=spread_ok,
             no_manipulation=not manip,
             net_ev_positive=net_ev_ok,
+            net_edge_dollars=best_net_for_tier,
             config=config.tiers,
         )
 

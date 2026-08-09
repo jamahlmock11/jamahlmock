@@ -50,12 +50,12 @@ v6:
   enabled: true
   series_ticker: KXBTC15M
   live_trading_enabled: true
-  strict_min_gap_dollars: 0.10
+  strict_min_gap_dollars: 0.05
   min_trades_per_bucket: 3
   monte_carlo_sims: 5000
-  max_spread: 0.08
-  min_liquidity_score: 0.15
-  max_model_disagreement_pp: 12.0
+  max_spread: 0.12
+  min_liquidity_score: 0.10
+  max_model_disagreement_pp: 28.0
   min_pattern_examples: 5
   require_pattern_evidence: false
   journal_path: data/v6_trade_journal.db
@@ -72,11 +72,15 @@ v6:
   min_open_seconds: 30.0
   tiers:
     enabled_for_live: true
-    edge_exceptional: 0.25
-    edge_strong: 0.20
-    edge_conditional: 0.15
-    edge_experimental: 0.10
-    conditional_min_confidence: 0.70
+    use_raw_edge_for_tiers: true
+    edge_exceptional: 0.20
+    edge_strong: 0.15
+    edge_conditional: 0.08
+    edge_experimental: 0.05
+    min_net_edge_strong: 0.0
+    min_net_edge_experimental: -0.02
+    conditional_min_confidence: 0.50
+    conditional_requires_model_agree: false
     size_multiplier_exceptional: 1.0
     size_multiplier_strong: 1.0
     size_multiplier_conditional: 0.75

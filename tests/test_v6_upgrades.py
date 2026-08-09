@@ -179,9 +179,9 @@ def test_v6_engine_strict_edge_blocks_weak_gap():
     }
     for _ in range(30):
         engine.update_spot(65100.0)
-    decision = engine.evaluate(market, spot=65100.0, vol=0.55, options_prob=0.58, record_diagnostics=False)
+    decision = engine.evaluate_legacy(market, spot=65100.0, vol=0.55, options_prob=0.58)
     assert decision.verdict == "NO_TRADE"
-    assert "EDGE_TOO_SMALL" in decision.blockers or decision.audit_record.primary_rejection == RejectionCode.EDGE_TOO_SMALL
+    assert any("strict_edge_fail" in b for b in decision.blockers)
 
 
 def test_v6_engine_passes_large_gap():

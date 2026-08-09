@@ -1,12 +1,12 @@
 """Edge quality tiers — separate trade frequency from trade quality.
 
-| Net edge | Tier        | Action                              |
-|----------|-------------|-------------------------------------|
-| ≥ 25¢    | EXCEPTIONAL | 🟢 Exceptional opportunity          |
-| 20–25¢   | STRONG      | 🟢 Strong trade                     |
-| 15–20¢   | CONDITIONAL | 🟡 Trade only with strong confirm.  |
-| 10–15¢   | EXPERIMENTAL| 🟠 Small/experimental trade         |
-| < 10¢    | NO_TRADE    | 🔴 No trade                         |
+| Edge (raw or net) | Tier         | Action                              |
+|-------------------|--------------|-------------------------------------|
+| ≥ 20¢             | EXCEPTIONAL  | 🟢 Exceptional opportunity          |
+| 15–20¢            | STRONG       | 🟢 Strong trade                     |
+| 8–15¢             | CONDITIONAL  | 🟡 Trade only with strong confirm.  |
+| 5–8¢              | EXPERIMENTAL | 🟠 Small/experimental trade         |
+| < 5¢              | NO_TRADE     | 🔴 No trade                         |
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from kalshi_bot.config import TierEdgeConfig
 
 
 class EdgeQuality(str, Enum):
-    EXCEPTIONAL = "EXCEPTIONAL"      # ≥25¢
-    STRONG = "STRONG"                # 20–25¢
-    CONDITIONAL = "CONDITIONAL"        # 15–20¢
-    EXPERIMENTAL = "EXPERIMENTAL"    # 10–15¢
-    NO_TRADE = "NO_TRADE"            # <10¢
+    EXCEPTIONAL = "EXCEPTIONAL"
+    STRONG = "STRONG"
+    CONDITIONAL = "CONDITIONAL"
+    EXPERIMENTAL = "EXPERIMENTAL"
+    NO_TRADE = "NO_TRADE"
 
 
 EDGE_ACTION_LABEL: dict[EdgeQuality, str] = {
@@ -34,7 +34,6 @@ EDGE_ACTION_LABEL: dict[EdgeQuality, str] = {
 }
 
 
-# Legacy alias kept for diagnostics compatibility
 class SetupTier(str, Enum):
     A_PLUS = "A_PLUS"
     A = "A"
@@ -69,70 +68,51 @@ def classify_edge_quality(
     raw_edge_dollars: float | None = None,
     config: TierEdgeConfig | None = None,
 ) -> EdgeQualityAssessment:
-    """Classify net edge into quality tier (frequency ≠ quality)."""
+    """Classify edge into quality tier. Uses raw edge when configured."""
     cfg = config or TierEdgeConfig()
     raw = raw_edge_dollars if raw_edge_dollars is not None else net_edge_dollars
-    cents = net_edge_dollars * 100
+    tier_edge = raw if cfg.use_raw_edge_for_tiers else net_edge_dollars
+    cents = tier_edge * 100
 
     if cents >= cfg.edge_exceptional * 100:
         q = EdgeQuality.EXCEPTIONAL
-        return EdgeQualityAssessment(
-            quality=q,
-            net_edge_dollars=net_edge_dollars,
-            raw_edge_dollars=raw,
-            action_label=EDGE_ACTION_LABEL[q],
-            trades_allowed=True,
-            requires_confirmation=False,
-            size_multiplier=cfg.size_multiplier_exceptional,
-            detail=f"net={cents:.1f}¢ ≥ {cfg.edge_exceptional*100:.0f}¢ exceptional",
-        )
-    if cents >= cfg.edge_strong * 100:
+    elif cents >= cfg.edge_strong * 100:
         q = EdgeQuality.STRONG
-        return EdgeQualityAssessment(
-            quality=q,
-            net_edge_dollars=net_edge_dollars,
-            raw_edge_dollars=raw,
-            action_label=EDGE_ACTION_LABEL[q],
-            trades_allowed=True,
-            requires_confirmation=False,
-            size_multiplier=cfg.size_multiplier_strong,
-            detail=f"net={cents:.1f}¢ in strong band {cfg.edge_strong*100:.0f}–{cfg.edge_exceptional*100:.0f}¢",
-        )
-    if cents >= cfg.edge_conditional * 100:
+    elif cents >= cfg.edge_conditional * 100:
         q = EdgeQuality.CONDITIONAL
-        return EdgeQualityAssessment(
-            quality=q,
-            net_edge_dollars=net_edge_dollars,
-            raw_edge_dollars=raw,
-            action_label=EDGE_ACTION_LABEL[q],
-            trades_allowed=True,
-            requires_confirmation=True,
-            size_multiplier=cfg.size_multiplier_conditional,
-            detail=f"net={cents:.1f}¢ in conditional band {cfg.edge_conditional*100:.0f}–{cfg.edge_strong*100:.0f}¢",
-        )
-    if cents >= cfg.edge_experimental * 100:
+    elif cents >= cfg.edge_experimental * 100:
         q = EdgeQuality.EXPERIMENTAL
+    else:
+        q = EdgeQuality.NO_TRADE
+
+    if q == EdgeQuality.NO_TRADE:
         return EdgeQualityAssessment(
             quality=q,
             net_edge_dollars=net_edge_dollars,
             raw_edge_dollars=raw,
             action_label=EDGE_ACTION_LABEL[q],
-            trades_allowed=True,
+            trades_allowed=False,
             requires_confirmation=False,
-            size_multiplier=cfg.size_multiplier_experimental,
-            detail=f"net={cents:.1f}¢ in experimental band {cfg.edge_experimental*100:.0f}–{cfg.edge_conditional*100:.0f}¢",
+            size_multiplier=0.0,
+            detail=f"edge={cents:.1f}¢ < {cfg.edge_experimental*100:.0f}¢ floor",
         )
 
-    q = EdgeQuality.NO_TRADE
+    requires_conf = q == EdgeQuality.CONDITIONAL
+    multipliers = {
+        EdgeQuality.EXCEPTIONAL: cfg.size_multiplier_exceptional,
+        EdgeQuality.STRONG: cfg.size_multiplier_strong,
+        EdgeQuality.CONDITIONAL: cfg.size_multiplier_conditional,
+        EdgeQuality.EXPERIMENTAL: cfg.size_multiplier_experimental,
+    }
     return EdgeQualityAssessment(
         quality=q,
         net_edge_dollars=net_edge_dollars,
         raw_edge_dollars=raw,
         action_label=EDGE_ACTION_LABEL[q],
-        trades_allowed=False,
-        requires_confirmation=False,
-        size_multiplier=0.0,
-        detail=f"net={cents:.1f}¢ < {cfg.edge_experimental*100:.0f}¢ floor",
+        trades_allowed=True,
+        requires_confirmation=requires_conf,
+        size_multiplier=multipliers[q],
+        detail=f"{'raw' if cfg.use_raw_edge_for_tiers else 'net'}={cents:.1f}¢ → {q.value}",
     )
 
 
@@ -146,14 +126,12 @@ def confirmation_passes(
     no_manipulation: bool,
     config: TierEdgeConfig | None = None,
 ) -> tuple[bool, str]:
-    """Strong confirmation gate for CONDITIONAL (15–20¢) tier."""
+    """Confirmation gate for CONDITIONAL tier (relaxed)."""
     cfg = config or TierEdgeConfig()
-    if not model_agrees:
+    if cfg.conditional_requires_model_agree and not model_agrees:
         return False, "models disagree"
     if model_confidence < cfg.conditional_min_confidence:
         return False, f"confidence {model_confidence:.2f} < {cfg.conditional_min_confidence:.2f}"
-    if not data_fresh:
-        return False, "data not fresh"
     if not liquidity_ok:
         return False, "liquidity insufficient"
     if not spread_ok:
@@ -161,6 +139,19 @@ def confirmation_passes(
     if not no_manipulation:
         return False, "manipulation suspected"
     return True, "confirmed"
+
+
+def _net_ev_ok_for_tier(
+    edge: EdgeQualityAssessment,
+    net_edge: float,
+    config: TierEdgeConfig,
+) -> bool:
+    if edge.quality in (EdgeQuality.EXCEPTIONAL, EdgeQuality.STRONG):
+        return net_edge >= config.min_net_edge_strong
+    if edge.quality == EdgeQuality.EXPERIMENTAL:
+        return net_edge >= config.min_net_edge_experimental
+    # Conditional: small negative net ok if raw edge is solid
+    return net_edge >= config.min_net_edge_experimental
 
 
 def should_trade_for_quality(
@@ -173,17 +164,23 @@ def should_trade_for_quality(
     spread_ok: bool,
     no_manipulation: bool,
     net_ev_positive: bool,
+    net_edge_dollars: float,
     config: TierEdgeConfig | None = None,
 ) -> tuple[bool, str]:
     """Decide if edge quality tier permits a trade."""
+    cfg = config or TierEdgeConfig()
     if not edge.trades_allowed:
         return False, edge.detail
-    if not net_ev_positive:
-        return False, "net EV ≤ 0 after fees/slippage"
+
+    net_ok = _net_ev_ok_for_tier(edge, net_edge_dollars, cfg)
+    if not net_ok and not (cfg.use_raw_edge_for_tiers and edge.raw_edge_dollars >= cfg.edge_experimental):
+        return False, f"net EV {net_edge_dollars*100:.1f}¢ below floor"
+
     if edge.quality in (EdgeQuality.EXCEPTIONAL, EdgeQuality.STRONG):
         if not no_manipulation:
             return False, "manipulation suspected"
         return True, edge.action_label
+
     if edge.quality == EdgeQuality.CONDITIONAL:
         ok, reason = confirmation_passes(
             model_confidence=model_confidence,
@@ -192,15 +189,17 @@ def should_trade_for_quality(
             liquidity_ok=liquidity_ok,
             spread_ok=spread_ok,
             no_manipulation=no_manipulation,
-            config=config,
+            config=cfg,
         )
-        return ok, reason if ok else f"conditional confirmation failed: {reason}"
+        return ok, reason if ok else f"conditional: {reason}"
+
     if edge.quality == EdgeQuality.EXPERIMENTAL:
         if not spread_ok or not liquidity_ok:
-            return False, "experimental tier needs acceptable spread/liquidity"
+            return False, "experimental: spread/liquidity"
         if not no_manipulation:
             return False, "manipulation suspected"
         return True, edge.action_label
+
     return False, "no trade tier"
 
 
@@ -214,9 +213,11 @@ def classify_tier(
     model_agrees: bool,
     no_conflicts: bool,
     config: TierEdgeConfig,
+    raw_edge_dollars: float | None = None,
 ) -> TierAssessment:
-    """Legacy tier mapping for diagnostics (maps edge quality → A+/A/B)."""
-    eq = classify_edge_quality(net_edge_dollars, config=config)
+    eq = classify_edge_quality(
+        net_edge_dollars, raw_edge_dollars=raw_edge_dollars, config=config
+    )
     mapping = {
         EdgeQuality.EXCEPTIONAL: SetupTier.A_PLUS,
         EdgeQuality.STRONG: SetupTier.A,
@@ -225,19 +226,19 @@ def classify_tier(
         EdgeQuality.NO_TRADE: SetupTier.NONE,
     }
     tier = mapping[eq.quality]
-    qualifies = eq.trades_allowed and eq.quality != EdgeQuality.NO_TRADE
-    if eq.quality == EdgeQuality.CONDITIONAL:
-        ok, _ = confirmation_passes(
-            model_confidence=model_confidence,
-            model_agrees=model_agrees,
-            data_fresh=data_fresh,
-            liquidity_ok=liquidity_ok,
-            spread_ok=spread_ok,
-            no_manipulation=no_conflicts,
-            config=config,
-        )
-        qualifies = ok
-    return TierAssessment(tier, eq.net_edge_dollars, net_edge_dollars, qualifies, eq.detail)
+    ok, _ = should_trade_for_quality(
+        eq,
+        model_confidence=model_confidence,
+        model_agrees=model_agrees,
+        data_fresh=data_fresh,
+        liquidity_ok=liquidity_ok,
+        spread_ok=spread_ok,
+        no_manipulation=no_conflicts,
+        net_ev_positive=net_edge_dollars > 0,
+        net_edge_dollars=net_edge_dollars,
+        config=config,
+    )
+    return TierAssessment(tier, eq.net_edge_dollars, net_edge_dollars, ok, eq.detail)
 
 
 def opportunity_score(
@@ -251,7 +252,6 @@ def opportunity_score(
     data_fresh: bool,
     model_agrees: bool,
 ) -> float:
-    """Rank opportunities. Does NOT override hard risk limits."""
     score = net_edge_dollars * 100 * 2.0
     score += model_confidence * 30.0
     score += abs(momentum_confirmation) * 10.0
@@ -260,10 +260,8 @@ def opportunity_score(
     if data_fresh:
         score += 5.0
     if model_agrees:
-        score += 8.0
-    score -= spread * 100 * 2.0
-    if not model_agrees:
-        score -= 10.0  # soft penalty, not hard block
+        score += 5.0
+    score -= spread * 100 * 1.5
     return round(max(0.0, score), 2)
 
 
@@ -273,8 +271,7 @@ def estimate_slippage(
     liquidity_score: float,
     contracts: int = 1,
 ) -> float:
-    """Conservative slippage estimate in dollars per contract."""
     half_spread = spread / 2.0
-    depth_penalty = max(0.0, 0.02 * (1.0 - liquidity_score))
-    size_penalty = 0.005 * max(0, contracts - 1)
+    depth_penalty = max(0.0, 0.015 * (1.0 - liquidity_score))
+    size_penalty = 0.003 * max(0, contracts - 1)
     return round(half_spread + depth_penalty + size_penalty, 4)
