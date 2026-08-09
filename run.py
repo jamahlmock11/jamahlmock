@@ -360,7 +360,7 @@ def build_v6_runtime(
         api_key_id=settings.kalshi_api_key_id,
         private_key_pem=settings.resolve_private_key_pem(),
     )
-    engine = V6IntelligenceEngine(config.v6, client=client)
+    engine = V6IntelligenceEngine(config.v6, client=client, arbitrary_cfg=config.arbitrary)
     scanner = V6Scanner(client, config, engine)
     risk = RiskManager(config)
     executor = Executor(client, config, risk)

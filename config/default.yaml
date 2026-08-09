@@ -1,3 +1,15 @@
+# Arbitrary policy — independent YES/NO judgment (both bots)
+arbitrary:
+  enabled: true
+  favorite_threshold: 0.52
+  underdog_threshold: 0.48
+  uncalibrated_shrink: 0.85
+  time_edge_bonus_max: 0.30
+  chase_min_gap_decay_pp: 3.0
+  chase_max_ask_rise: 0.02
+  block_favorite_without_edge: true
+  require_calibration_for_conditional: true
+
 # CF Benchmarks BRTI — official Kalshi settlement index (https://www.cfbenchmarks.com/data/indices/BRTI)
 brti:
   index_id: BRTI

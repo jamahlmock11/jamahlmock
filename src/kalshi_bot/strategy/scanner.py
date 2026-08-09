@@ -12,8 +12,10 @@ from kalshi_bot.data.brti import SpotSnapshot, resolve_spot
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
 from kalshi_bot.data.realized_vol import SECONDS_PER_YEAR, RealizedVolEstimate, estimate_realized_vol
 from kalshi_bot.models.smile import VolSmile
+from kalshi_bot.strategy.arbitrary_policy import EdgeChaseGuard
 from kalshi_bot.strategy.decision import DecisionVerdict, TradeDecision, evaluate_forecast_market
 from kalshi_bot.strategy.mispricing import Mispricing, evaluate_market
+from kalshi_bot.strategy.probability_calibration import ProbabilityCalibrator
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,8 @@ class MispricingScanner:
     def __init__(self, client: KalshiClient, config: BotConfig) -> None:
         self.client = client
         self.config = config
+        self.calibrator = ProbabilityCalibrator(config.arbitrary.min_trades_per_bucket)
+        self.chase_guard = EdgeChaseGuard(ttl_seconds=config.arbitrary.chase_ttl_seconds)
 
     def _series_cfg(self, ticker: str) -> SeriesConfig | None:
         for s in self.config.series:
@@ -163,6 +167,8 @@ class ForecastScanner:
     def __init__(self, client: KalshiClient, config: BotConfig) -> None:
         self.client = client
         self.config = config
+        self.calibrator = ProbabilityCalibrator(config.arbitrary.min_trades_per_bucket)
+        self.chase_guard = EdgeChaseGuard(ttl_seconds=config.arbitrary.chase_ttl_seconds)
 
     def scan(self, smile: VolSmile | None, spot_override: float | None = None) -> ForecastScanResult:
         fallback = spot_override or (smile.spot_btc if smile else None)
@@ -203,6 +209,9 @@ class ForecastScanner:
                     realized=_scale_realized(realized, secs),
                     spot_is_official=spot.is_official,
                     bot_action_cfg=self.config.bot_action,
+                    arbitrary_cfg=self.config.arbitrary,
+                    calibrator=self.calibrator,
+                    chase_guard=self.chase_guard,
                 )
                 decisions.append(decision)
 

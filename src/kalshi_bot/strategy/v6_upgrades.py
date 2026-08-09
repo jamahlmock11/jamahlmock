@@ -24,7 +24,7 @@ from typing import Any, Sequence
 import numpy as np
 from scipy.stats import norm
 
-from kalshi_bot.config import V6Config
+from kalshi_bot.config import ArbitraryPolicyConfig, V6Config
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
 from kalshi_bot.strategy.rejection_codes import RejectionCode
@@ -430,36 +430,8 @@ def monte_carlo_binary(
 # Probability calibration (≥3 trades per bucket)
 # ---------------------------------------------------------------------------
 
-@dataclass
-class CalibrationBucket:
-    bucket_lo: float
-    bucket_hi: float
-    n_trades: int
-    empirical_win_rate: float
-    calibrated_offset: float
-
-
-class ProbabilityCalibrator:
-    """Bucket-wise calibration; requires ≥3 trades per bucket."""
-
-    def __init__(self, min_trades_per_bucket: int = 3) -> None:
-        self.min_trades = min_trades_per_bucket
-        self._buckets: dict[int, list[bool]] = {}
-
-    def _key(self, prob: float) -> int:
-        return int(prob * 10)  # decile buckets
-
-    def record(self, predicted_prob: float, won: bool) -> None:
-        self._buckets.setdefault(self._key(predicted_prob), []).append(won)
-
-    def calibrate(self, prob: float) -> tuple[float, bool]:
-        key = self._key(prob)
-        outcomes = self._buckets.get(key, [])
-        if len(outcomes) < self.min_trades:
-            return prob, False
-        empirical = sum(outcomes) / len(outcomes)
-        offset = empirical - prob
-        return max(0.01, min(0.99, prob + offset)), True
+from kalshi_bot.strategy.probability_calibration import CalibrationBucket, ProbabilityCalibrator
+from kalshi_bot.strategy.arbitrary_policy import EdgeChaseGuard
 
 
 # ---------------------------------------------------------------------------
@@ -709,10 +681,12 @@ class V6Decision:
 class V6IntelligenceEngine:
     """Kalshi BTC 15-Min Intelligence V6 orchestrator."""
 
-    def __init__(self, config: V6Config, client: KalshiClient | None = None) -> None:
+    def __init__(self, config: V6Config, client: KalshiClient | None = None, *, arbitrary_cfg: ArbitraryPolicyConfig | None = None) -> None:
         self.config = config
         self.client = client
+        self.arbitrary_cfg = arbitrary_cfg or ArbitraryPolicyConfig()
         self.calibrator = ProbabilityCalibrator(config.min_trades_per_bucket)
+        self.chase_guard = EdgeChaseGuard(ttl_seconds=self.arbitrary_cfg.chase_ttl_seconds)
         self.journal = TradeJournal(config.journal_path)
         self.risk = RiskControllerV6(config)
         self.weights = SignalWeightLearner()
