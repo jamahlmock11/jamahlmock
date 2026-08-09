@@ -17,7 +17,7 @@ risk:
   max_exposure_usd: 3.5
   max_loss_per_trade_usd: 3.0
   cooldown_seconds: 5.0
-  min_seconds_to_expiry: 120.0
+  min_seconds_to_expiry: 60.0
   max_seconds_to_expiry_15m: 840
   # Hourly markets: execute only in the last 20 minutes (skip first ~40m).
   max_seconds_to_expiry_1h: 1200

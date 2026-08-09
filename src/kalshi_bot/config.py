@@ -29,7 +29,7 @@ class RiskConfig(BaseModel):
     max_exposure_usd: float = 300.0
     max_loss_per_trade_usd: float = 50.0
     cooldown_seconds: float = 5.0
-    min_seconds_to_expiry: float = 120.0
+    min_seconds_to_expiry: float = 60.0
     max_seconds_to_expiry_15m: float = 14 * 60
     # Hourly (KXBTCD): last-20-minute execution window only.
     max_seconds_to_expiry_1h: float = 20 * 60
@@ -56,7 +56,7 @@ class ForecastGateConfig(BaseModel):
     min_edge_pp: float = 10.0
     max_spread: float = 0.06
     min_volume: float = 50.0
-    min_seconds_to_expiry: float = 120.0
+    min_seconds_to_expiry: float = 60.0
     # Do not enter before the final 20 minutes of the hourly contract.
     max_seconds_to_expiry: float = 20 * 60
     hourly_only: bool = True
