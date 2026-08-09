@@ -1,0 +1,4 @@
+{
+  "name": "Kalshi BTC 1h Forecasting Engine",
+  "install": "pip install -e \".[dev]\""
+}
