@@ -40,7 +40,11 @@ def kelly_contracts(
     f = max(0.0, min(1.0, f_star * kelly_fraction))
     dollars = min(bankroll * f, max_notional, max_loss / max(c, 1e-6))
     contracts = int(dollars / c)
-    return max(0, min(contracts, max_contracts))
+    result = max(0, min(contracts, max_contracts))
+    # Small bankrolls: fractional Kelly rounds to 0 even on valid edges.
+    if result == 0 and bankroll >= c and (p - c) > 0:
+        result = 1
+    return min(result, int(bankroll / c))
 
 
 class RiskManager:

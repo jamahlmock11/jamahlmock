@@ -1,12 +1,37 @@
-# Kalshi BTC 1-Hour Forecasting Engine
+# Kalshi BTC Forecasting Engine
 
-Institutional-grade expected-value engine for Kalshi **KXBTCD** (Bitcoin 1-hour) markets.
+Institutional-grade expected-value engine for Kalshi **KXBTCD** (Bitcoin 1-hour) and **KXBTC15M** (15-minute) markets.
 
 **Objective:** maximize long-term EV.  
 **Constraint:** accuracy > trade frequency.  
 **Default action:** **NO TRADE** when evidence is insufficient.
 
-This is **not** a price-following bot. A trade is emitted only when an ensemble forecast clears fee-aware edge floors **and** statistical evidence gates.
+---
+
+## Kalshi BTC 15-Min Intelligence V6 (activated)
+
+The **V6 workflow** (`run.py`) targets **KXBTC15M** with microstructure, multi-model ensemble, Monte Carlo (5000 sims), regime detection, manipulation detection, probability calibration, pattern matching, and confidence-scaled Kelly sizing.
+
+### STRICT EDGE RULE (hard filter)
+
+Only recommend **BUY** when the market price is **≥20–25¢ below** the model probability. No exceptions for A/B setups.
+
+| Model prob | Max market YES | Gap |
+|---|---|---|
+| 60% | ≤35¢ | 25¢ |
+| 60% | ≤40¢ | 20¢ |
+| 60% | 45¢+ | **NO TRADE** |
+
+```bash
+python run.py                  # single V6 scan
+python run.py --loop -n 30     # 30-cycle loop
+python run.py --strict 0.25    # extra-strict 25¢ floor
+kalshi-intelligence            # same via entrypoint
+```
+
+V6 features: live bid/ask imbalance, order book depth (top 10), whale detection, spread dynamics, trade velocity, liquidity score, VWAP distance, short-term momentum, volatility expansion, support/resistance, breakout/fake-breakout detection, time features, multi-model agreement (gradient boosting, logistic, neural net, time-series), Do Not Trade score, historical pattern matching, kill switch, institutional flow, strike gravity, explainability score, and continuous learning journal.
+
+Calibration requires **≥3 trades per probability bucket** before adjustments apply.
 
 ---
 

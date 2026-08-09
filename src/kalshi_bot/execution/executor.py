@@ -37,6 +37,7 @@ class Executor:
 
     def execute(self, mis: Mispricing, contracts: int, *, ignore_cooldown: bool = False) -> Fill | None:
         if contracts <= 0:
+            logger.info("skip %s: size=0 (bankroll too small for Kelly)", mis.ticker)
             return None
         ok, reason = self.risk.allow(mis, ignore_cooldown=ignore_cooldown)
         if not ok:
