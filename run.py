@@ -194,6 +194,9 @@ def v6_to_mispricing(ticker: str, decision: V6Decision) -> Mispricing | None:
     side = Side.YES if decision.verdict == "TRADE_YES" else Side.NO
     prob = decision.model_probability if side == Side.YES else 1.0 - decision.model_probability
     gap_pp = decision.strict_gap_dollars * 100
+    seconds_to_expiry = 0.0
+    if decision.audit_record is not None:
+        seconds_to_expiry = float(decision.audit_record.minutes_to_expiry) * 60.0
     return Mispricing(
         ticker=ticker,
         series="KXBTC15M",
@@ -205,7 +208,7 @@ def v6_to_mispricing(ticker: str, decision: V6Decision) -> Mispricing | None:
         strike=0.0,
         spot=0.0,
         vol=0.0,
-        seconds_to_expiry=0.0,
+        seconds_to_expiry=seconds_to_expiry,
         yes_bid=None,
         yes_ask=decision.market_price if side == Side.YES else None,
         implied=None,  # type: ignore[arg-type]
