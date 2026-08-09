@@ -160,43 +160,37 @@ class KalshiClient:
         time_in_force: str = "immediate_or_cancel",
         client_order_id: str | None = None,
     ) -> dict:
-        """Place an order via legacy portfolio endpoint (widely supported).
+        """Place an order via Kalshi V2 event-market endpoint."""
+        if action != "buy":
+            raise ValueError(f"unsupported action: {action}")
 
-        Prefer fixed-point dollar prices when provided.
-        """
+        if side == "yes":
+            if yes_price_dollars is None:
+                raise ValueError("yes_price_dollars required for YES buy")
+            book_side = "bid"
+            price = f"{float(yes_price_dollars):.4f}"
+        elif side == "no":
+            if no_price_dollars is None:
+                raise ValueError("no_price_dollars required for NO buy")
+            # V2 quotes the YES book only; buying NO ≡ selling YES at (1 - NO price).
+            book_side = "ask"
+            price = f"{1.0 - float(no_price_dollars):.4f}"
+        else:
+            raise ValueError(f"unsupported side: {side}")
+
         body: dict[str, Any] = {
             "ticker": ticker,
-            "side": side,
-            "action": action,
-            "count": count,
-            "type": "limit",
+            "side": book_side,
+            "count": f"{count:.2f}",
+            "price": price,
+            "time_in_force": time_in_force,
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": client_order_id or str(uuid.uuid4()),
+            "post_only": False,
+            "cancel_order_on_pause": False,
+            "reduce_only": False,
         }
-        # Convert dollar string "0.42" -> cents int for legacy endpoint.
-        if yes_price_dollars is not None:
-            body["yes_price"] = int(round(float(yes_price_dollars) * 100))
-        if no_price_dollars is not None:
-            body["no_price"] = int(round(float(no_price_dollars) * 100))
-        # time_in_force mapping for legacy: IOC via expiration_ts near-now is awkward;
-        # many stacks use post-only false and rely on fill. Keep field if accepted.
-        try:
-            return self.request("POST", "/portfolio/orders", json_body=body)
-        except RuntimeError:
-            # Fallback to V2 events orders shape
-            v2 = {
-                "ticker": ticker,
-                "side": "yes" if side == "yes" else "no",
-                "action": action,
-                "count": f"{count:.2f}",
-                "type": "limit",
-                "client_order_id": body["client_order_id"],
-                "time_in_force": time_in_force,
-            }
-            if yes_price_dollars is not None and side == "yes":
-                v2["yes_price_dollars"] = yes_price_dollars
-            if no_price_dollars is not None and side == "no":
-                v2["no_price_dollars"] = no_price_dollars
-            return self.request("POST", "/portfolio/events/orders", json_body=v2)
+        return self.request("POST", "/portfolio/events/orders", json_body=body)
 
     def get_brti(self, index_id: str = "BRTI") -> float | None:
         """Fetch CF Benchmarks BRTI via Kalshi authenticated passthrough."""
