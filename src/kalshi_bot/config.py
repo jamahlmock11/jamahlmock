@@ -22,6 +22,34 @@ class SeriesConfig(BaseModel):
     max_notional_usd: float = 250.0
 
 
+class ArbitraryPolicyConfig(BaseModel):
+    """Independent YES/NO judgment — do not blindly follow the market favorite."""
+
+    enabled: bool = True
+    favorite_threshold: float = 0.52
+    underdog_threshold: float = 0.48
+    uncalibrated_shrink: float = 0.85
+    uncalibrated_band_pp: float = 4.0
+    time_edge_bonus_max: float = 0.30
+    chase_min_gap_decay_pp: float = 3.0
+    chase_max_ask_rise: float = 0.02
+    chase_ttl_seconds: float = 120.0
+    block_favorite_without_edge: bool = True
+    require_calibration_for_conditional: bool = True
+    min_trades_per_bucket: int = 3
+
+
+class BrtiConfig(BaseModel):
+    """CF Benchmarks BRTI (Kalshi settlement index) resolution."""
+
+    index_id: str = "BRTI"
+    prefer_official: bool = True
+    public_summary_enabled: bool = True
+    allow_exchange_proxy: bool = True
+    cf_benchmarks_username: str | None = None
+    cf_benchmarks_api_key: str | None = None
+
+
 class RiskConfig(BaseModel):
     bankroll_usd: float = 1000.0
     kelly_fraction: float = 0.15
@@ -73,26 +101,20 @@ class TierEdgeConfig(BaseModel):
     """Edge quality tiers — separate frequency from quality."""
 
     enabled_for_live: bool = True
-    # Classify tiers on raw edge (before fees) — better for small bankrolls where fees eat net edge.
     use_raw_edge_for_tiers: bool = True
-    # Net-edge band floors (dollars) when use_raw_edge_for_tiers=false
-    edge_exceptional: float = 0.20   # ≥20¢
-    edge_strong: float = 0.15        # 15–20¢
-    edge_conditional: float = 0.08   # 8–15¢
-    edge_experimental: float = 0.05  # 5–8¢; below = no trade
-    # Minimum net EV after fees (can be slightly negative for experimental on small accounts)
+    edge_exceptional: float = 0.20
+    edge_strong: float = 0.15
+    edge_conditional: float = 0.08
+    edge_experimental: float = 0.05
     min_net_edge_strong: float = 0.0
     min_net_edge_experimental: float = -0.02
-    # Confirmation for CONDITIONAL tier
     conditional_min_confidence: float = 0.50
     conditional_requires_model_agree: bool = False
-    # Position size multipliers by tier (applied to Kelly)
     size_multiplier_exceptional: float = 1.0
     size_multiplier_strong: float = 1.0
     size_multiplier_conditional: float = 0.75
     size_multiplier_experimental: float = 0.50
     experimental_max_contracts: int = 1
-    # Legacy aliases (diagnostics)
     min_edge_a_plus: float = 0.20
     min_edge_a: float = 0.15
     min_edge_b: float = 0.05
@@ -107,7 +129,6 @@ class V6Config(BaseModel):
     enabled: bool = True
     series_ticker: str = "KXBTC15M"
     live_trading_enabled: bool = False
-    # Minimum net edge floor for any consideration (10¢ experimental band).
     strict_min_gap_dollars: float = 0.05
     min_trades_per_bucket: int = 3
     monte_carlo_sims: int = 5000
@@ -127,20 +148,15 @@ class V6Config(BaseModel):
     cooldown_after_loss_seconds: float = 120.0
     min_seconds_to_expiry: float = 60.0
     max_seconds_to_expiry: float = 840.0
-    min_open_seconds: float = 30.0  # don't trade in first 30s of new market
+    min_open_seconds: float = 30.0
     tiers: TierEdgeConfig = Field(default_factory=TierEdgeConfig)
 
 
 class BotActionConfig(BaseModel):
-    """Gap-tiered buy action policy (model prob − market price).
-
-    Defaults match the 60% model reference matrix:
-    ≥20pp Strong BUY, ≥15pp conditional, <15pp No trade.
-    """
+    """Gap-tiered buy action policy (model prob − market price)."""
 
     strong_buy_min_gap_pp: float = 20.0
     conditional_min_gap_pp: float = 15.0
-    # Elevated confirmation required only for the CONDITIONAL tier.
     conditional_min_confidence: float = 0.70
     conditional_max_disagreement_pp: float = 6.0
 
@@ -154,6 +170,8 @@ class ExecutionConfig(BaseModel):
 
 
 class BotConfig(BaseModel):
+    brti: BrtiConfig = Field(default_factory=BrtiConfig)
+    arbitrary: ArbitraryPolicyConfig = Field(default_factory=ArbitraryPolicyConfig)
     series: list[SeriesConfig] = Field(
         default_factory=lambda: [
             SeriesConfig(ticker="KXBTCD", enabled=True, min_edge_pp=10.0, max_contracts=400),
@@ -181,6 +199,8 @@ class Settings(BaseSettings):
     kalshi_private_key_pem: str | None = None
     kalshi_private_key_path: str | None = None
     kalshi_env: Literal["prod", "demo", "public"] = "public"
+    cf_benchmarks_api_username: str | None = None
+    cf_benchmarks_api_key: str | None = None
     config_path: str = "config/default.yaml"
     log_level: str = "INFO"
 

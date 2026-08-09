@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from kalshi_bot.config import V6Config
+from kalshi_bot.config import ArbitraryPolicyConfig, V6Config
 from kalshi_bot.data.kalshi_client import KalshiClient
+from kalshi_bot.strategy.arbitrary_policy import EdgeChaseGuard, evaluate_arbitrary
 from kalshi_bot.strategy.decision_record import (
     DataFreshness,
     FilterCheck,
@@ -408,11 +409,41 @@ def evaluate_market_audited(
         model_agrees=ensemble.models_agree,
     )
 
-    # --- Final verdict via edge quality tier ---
+    # --- Final verdict: Arbitrary policy (both sides, calibration, no chase) ---
     verdict = "NO_TRADE"
     contracts = 0
     side_rejections: list[RejectionCode] = []
     trade_reason = ""
+
+    arb = evaluate_arbitrary(
+        ticker=ticker,
+        model_prob_yes=model_prob,
+        model_prob_yes_lo=max(0.01, model_prob - 0.04),
+        model_prob_yes_hi=min(0.99, model_prob + 0.04),
+        yes_ask=yes_ask,
+        yes_bid=yes_bid,
+        no_ask=no_ask,
+        seconds_to_expiry=secs,
+        min_seconds_to_expiry=config.min_seconds_to_expiry,
+        max_seconds_to_expiry=config.max_seconds_to_expiry,
+        base_min_edge_pp=config.tiers.edge_experimental * 100.0,
+        fee_rate=fee_rate,
+        confidence=ensemble.agreement_score,
+        disagreement_pp=(
+            max(v.probability for v in ensemble.votes) - min(v.probability for v in ensemble.votes)
+        )
+        * 100,
+        sufficient_evidence=ensemble.models_agree,
+        calibrator=engine.calibrator,
+        chase_guard=engine.chase_guard,
+        policy_cfg=engine.arbitrary_cfg,
+    ) if engine.arbitrary_cfg.enabled else None
+
+    if arb is not None and arb.chase_blocked:
+        all_rejections.append(RejectionCode.EDGE_TOO_SMALL)
+        filter_checks.append(
+            FilterCheck("edge_chase", False, RejectionCode.EDGE_TOO_SMALL, "edge decayed or price chased")
+        )
 
     if not has_hard_block and best_eval and best_side:
         net_ev_ok = best_eval.passes_net_ev
@@ -429,8 +460,20 @@ def evaluate_market_audited(
             config=config.tiers,
         )
 
-        if can_trade and config.tiers.enabled_for_live:
+        arbitrary_ok = (
+            arb is not None
+            and arb.verdict != "NO_TRADE"
+            and arb.chosen_side == best_side
+        )
+        if can_trade and config.tiers.enabled_for_live and arbitrary_ok:
             verdict = f"TRADE_{best_side}"
+        elif can_trade and config.tiers.enabled_for_live and arb is not None and arb.verdict == "NO_TRADE":
+            all_rejections.extend(
+                [RejectionCode.EDGE_TOO_SMALL]
+                if any("overpriced_favorite" in b for b in arb.blockers)
+                else [RejectionCode.LOW_CONFIDENCE]
+            )
+            trade_reason = "; ".join(arb.blockers[:3]) or trade_reason
         elif not can_trade:
             if edge_quality.quality == EdgeQuality.NO_TRADE:
                 all_rejections.append(RejectionCode.EDGE_TOO_SMALL)

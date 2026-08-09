@@ -229,7 +229,7 @@ def test_outside_last_20m_window_blocks_trade():
 
 def test_gap_below_15pp_forces_no_trade_even_with_postfee_edge():
     """Matrix: 60% model vs 50¢ YES (10pp) → No trade, regardless of fee EV."""
-    from kalshi_bot.config import BotActionConfig
+    from kalshi_bot.config import BotActionConfig, ArbitraryPolicyConfig
     from kalshi_bot.strategy.bot_action import BotAction
     from kalshi_bot.strategy.decision import DecisionVerdict, evaluate_forecast_market
 
@@ -279,6 +279,7 @@ def test_gap_below_15pp_forces_no_trade_even_with_postfee_edge():
             gates=ForecastGateConfig(min_edge_pp=5.0, min_confidence=0.50, max_spread=0.10),
             spot_is_official=True,
             bot_action_cfg=BotActionConfig(),
+            arbitrary_cfg=ArbitraryPolicyConfig(enabled=False),
         )
     assert decision.verdict == DecisionVerdict.NO_TRADE
     assert decision.bot_action == BotAction.NO_TRADE
@@ -288,7 +289,7 @@ def test_gap_below_15pp_forces_no_trade_even_with_postfee_edge():
 
 def test_gap_20pp_is_strong_buy_candidate():
     """Matrix: 60% model vs 40¢ YES (20pp) → Strong BUY when other gates clear."""
-    from kalshi_bot.config import BotActionConfig
+    from kalshi_bot.config import BotActionConfig, ArbitraryPolicyConfig
     from kalshi_bot.strategy.bot_action import BotAction
     from kalshi_bot.strategy.decision import DecisionVerdict, evaluate_forecast_market
 
@@ -341,6 +342,7 @@ def test_gap_20pp_is_strong_buy_candidate():
             ),
             spot_is_official=True,
             bot_action_cfg=BotActionConfig(),
+            arbitrary_cfg=ArbitraryPolicyConfig(enabled=False),
         )
     assert decision.verdict == DecisionVerdict.TRADE
     assert decision.side == Side.YES

@@ -20,10 +20,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
-from kalshi_bot.config import BotActionConfig, ForecastGateConfig, SeriesConfig, SmileConfig
+from kalshi_bot.config import ArbitraryPolicyConfig, BotActionConfig, ForecastGateConfig, SeriesConfig, SmileConfig
 from kalshi_bot.data.realized_vol import RealizedVolEstimate
 from kalshi_bot.models.forecast import EnsembleForecast, ForecastAction, forecast_prob_above
 from kalshi_bot.models.smile import VolSmile
+from kalshi_bot.strategy.arbitrary_policy import EdgeChaseGuard, evaluate_arbitrary
 from kalshi_bot.strategy.bot_action import (
     BotAction,
     GapAssessment,
@@ -32,6 +33,7 @@ from kalshi_bot.strategy.bot_action import (
 )
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
 from kalshi_bot.strategy.mispricing import Side
+from kalshi_bot.strategy.probability_calibration import ProbabilityCalibrator
 
 
 class DecisionVerdict(str, Enum):
@@ -130,6 +132,9 @@ def evaluate_forecast_market(
     realized: RealizedVolEstimate | None = None,
     spot_is_official: bool = False,
     bot_action_cfg: BotActionConfig | None = None,
+    arbitrary_cfg: ArbitraryPolicyConfig | None = None,
+    calibrator: ProbabilityCalibrator | None = None,
+    chase_guard: EdgeChaseGuard | None = None,
 ) -> TradeDecision:
     """Return TRADE or NO_TRADE for one KXBTCD market."""
     now = now or datetime.now(timezone.utc)
@@ -223,6 +228,76 @@ def evaluate_forecast_market(
         blockers.append("ensemble evidence insufficient")
 
     p = forecast.probability_yes
+    policy = arbitrary_cfg or ArbitraryPolicyConfig()
+    if policy.enabled:
+        arb = evaluate_arbitrary(
+            ticker=ticker,
+            model_prob_yes=p,
+            model_prob_yes_lo=forecast.probability_lo,
+            model_prob_yes_hi=forecast.probability_hi,
+            yes_ask=yes_ask,
+            yes_bid=yes_bid,
+            no_ask=no_ask,
+            seconds_to_expiry=secs,
+            min_seconds_to_expiry=gates.min_seconds_to_expiry,
+            max_seconds_to_expiry=gates.max_seconds_to_expiry,
+            base_min_edge_pp=effective_min_edge,
+            fee_rate=fee_rate,
+            fee_multiplier=fee_multiplier,
+            confidence=confidence,
+            disagreement_pp=forecast.disagreement_pp,
+            sufficient_evidence=forecast.sufficient_evidence,
+            calibrator=calibrator,
+            chase_guard=chase_guard,
+            bot_action_cfg=action_cfg,
+            policy_cfg=policy,
+        )
+        reasons.extend(arb.reasons)
+        if blockers or arb.verdict == "NO_TRADE":
+            blockers.extend(arb.blockers)
+            best_side = Side.YES if arb.yes.net_edge_pp >= arb.no.net_edge_pp else Side.NO
+            best_assessment = arb.yes if best_side == Side.YES else arb.no
+            return _empty_decision(
+                ticker=ticker,
+                strike=float(strike),
+                spot=spot,
+                forecast=forecast,
+                blockers=blockers,
+                reasons=reasons,
+                kalshi_price=best_assessment.market_ask,
+                confidence=confidence,
+                secs=secs,
+                bot_action=best_assessment.bot_action,
+                gap_pp=best_assessment.raw_gap_pp,
+                edge_pp=best_assessment.raw_gap_pp,
+                edge_after=best_assessment.net_edge_pp,
+                ev=best_assessment.expected_value,
+                side=best_side,
+            )
+        chosen = arb.yes if arb.chosen_side == "YES" else arb.no
+        action = ForecastAction.TRADE_YES if arb.chosen_side == "YES" else ForecastAction.TRADE_NO
+        return TradeDecision(
+            verdict=DecisionVerdict.TRADE,
+            action=action,
+            side=Side.YES if arb.chosen_side == "YES" else Side.NO,
+            ticker=ticker,
+            strike=float(strike),
+            spot=spot,
+            kalshi_price=chosen.market_ask,
+            forecast_prob=p if arb.chosen_side == "YES" else 1.0 - p,
+            edge_pp=chosen.raw_gap_pp,
+            edge_after_fees_pp=chosen.net_edge_pp,
+            expected_value_per_contract=chosen.expected_value,
+            confidence=confidence,
+            disagreement_pp=forecast.disagreement_pp,
+            seconds_to_expiry=secs,
+            forecast=forecast,
+            reasons=tuple(reasons),
+            blockers=(),
+            bot_action=chosen.bot_action,
+            gap_pp=chosen.raw_gap_pp,
+        )
+
     p_yes_conservative = forecast.probability_lo
     p_no_conservative = 1.0 - forecast.probability_hi
 

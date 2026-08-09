@@ -198,35 +198,21 @@ class KalshiClient:
                 v2["no_price_dollars"] = no_price_dollars
             return self.request("POST", "/portfolio/events/orders", json_body=v2)
 
-    def get_brti(self) -> float | None:
+    def get_brti(self, index_id: str = "BRTI") -> float | None:
         """Fetch CF Benchmarks BRTI via Kalshi authenticated passthrough."""
+        from kalshi_bot.data.cfbenchmarks import parse_brti_payload
+
         if not self.authenticated:
             return None
         try:
-            data = self.get("/cfbenchmarks/values", id="BRTI")
+            data = self.get("/cfbenchmarks/values", id=index_id)
         except Exception as exc:
             logger.warning("BRTI passthrough failed: %s", exc)
             return None
-        # Response shapes vary; try common patterns.
-        payload = data.get("data", data)
-        if isinstance(payload, dict):
-            if "value" in payload:
-                return float(payload["value"])
-            values = payload.get("values") or payload.get("payload") or []
-            if isinstance(values, list) and values:
-                last = values[-1]
-                if isinstance(last, dict):
-                    for key in ("value", "v", "price"):
-                        if key in last:
-                            return float(last[key])
-                if isinstance(last, (int, float, str)):
-                    return float(last)
-        if isinstance(payload, list) and payload:
-            last = payload[-1]
-            if isinstance(last, dict) and "value" in last:
-                return float(last["value"])
-        logger.warning("unrecognized BRTI payload: %s", str(data)[:300])
-        return None
+        value = parse_brti_payload(data)
+        if value is None:
+            logger.warning("unrecognized BRTI payload: %s", str(data)[:300])
+        return value
 
 
 def normalize_market(raw: dict) -> dict[str, Any]:
