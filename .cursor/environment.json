@@ -1,0 +1,11 @@
+{
+  "name": "Kalshi V6 Bot",
+  "install": "pip install -e . -q",
+  "terminals": [
+    {
+      "name": "v6-loop",
+      "command": "python run.py --loop --execute",
+      "description": "Continuous V6 intelligence scan loop (5s interval; paper if unauthenticated, live per config)"
+    }
+  ]
+}
