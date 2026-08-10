@@ -690,9 +690,9 @@ class V6IntelligenceEngine:
         self.journal = TradeJournal(config.journal_path)
         self.risk = RiskControllerV6(config)
         self.weights = SignalWeightLearner()
-        self._price_history: deque[float] = deque(maxlen=120)
-        self._prev_spread: float | None = None
-        self._prev_depth: tuple[float, float] | None = None
+        self._price_history: dict[str, deque[float]] = {}
+        self._prev_spread: dict[str, float | None] = {}
+        self._prev_depth: dict[str, tuple[float, float] | None] = {}
         self._monitor: Any | None = None  # OpportunityMonitor, lazy init
 
     def get_monitor(self) -> Any:
@@ -702,8 +702,14 @@ class V6IntelligenceEngine:
             self._monitor = OpportunityMonitor(self.config.diagnostics_db_path)
         return self._monitor
 
-    def update_spot(self, price: float) -> None:
-        self._price_history.append(price)
+    def _history_key(self, market: dict) -> str:
+        return str(market.get("series_ticker") or self.config.series_ticker)
+
+    def update_spot(self, price: float, *, series_ticker: str | None = None) -> None:
+        key = series_ticker or self.config.series_ticker
+        if key not in self._price_history:
+            self._price_history[key] = deque(maxlen=120)
+        self._price_history[key].append(price)
 
     def evaluate(
         self,
@@ -781,8 +787,9 @@ class V6IntelligenceEngine:
     ) -> V6Decision:
         """Legacy evaluate path (pre-audit). Prefer evaluate()."""
         now = now or datetime.now(timezone.utc)
-        self.update_spot(spot)
         ticker = str(market.get("ticker") or "")
+        series = str(market.get("series_ticker") or self.config.series_ticker)
+        self.update_spot(spot, series_ticker=series)
         strike = float(market.get("strike") or spot)
         close = market.get("close_time")
         yes_bid = market.get("yes_bid")
@@ -803,13 +810,14 @@ class V6IntelligenceEngine:
             yes_bid=yes_bid,
             yes_ask=yes_ask,
             orderbook=orderbook,
-            prev_spread=self._prev_spread,
-            prev_depth=self._prev_depth,
+            prev_spread=self._prev_spread.get(series),
+            prev_depth=self._prev_depth.get(series),
         )
-        self._prev_spread = micro.spread
-        self._prev_depth = (micro.depth_bid_10, micro.depth_ask_10)
+        self._prev_spread[series] = micro.spread
+        self._prev_depth[series] = (micro.depth_bid_10, micro.depth_ask_10)
 
-        pa = compute_price_action(list(self._price_history))
+        history = self._price_history.get(series, deque())
+        pa = compute_price_action(list(history))
         time_feat = compute_time_features(close, now=now) if close else None
         regime = detect_regime(pa, micro)
         manip = detect_manipulation(micro, pa)

@@ -69,6 +69,9 @@ class RiskManager:
             return False, "already_traded_ticker"
         if mis.seconds_to_expiry < risk.min_seconds_to_expiry:
             return False, "too_close_to_expiry"
+        # 15-minute markets: refuse entries outside the active window.
+        if mis.series.endswith("15M") and mis.seconds_to_expiry > risk.max_seconds_to_expiry_15m:
+            return False, "outside_15m_window"
         # Hourly markets: refuse entries outside the last-20-minute window.
         if mis.series == "KXBTCD" and mis.seconds_to_expiry > risk.max_seconds_to_expiry_1h:
             return False, "outside_last_20m_window"

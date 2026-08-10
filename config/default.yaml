@@ -28,6 +28,36 @@ series:
     min_edge_pp: 25.0
     max_contracts: 5
     max_notional_usd: 3.5
+  - ticker: KXETH15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
+  - ticker: KXSOL15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
+  - ticker: KXXRP15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
+  - ticker: KXDOGE15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
+  - ticker: KXBNB15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
+  - ticker: KXHYPE15M
+    enabled: true
+    min_edge_pp: 25.0
+    max_contracts: 5
+    max_notional_usd: 3.5
 
 risk:
   bankroll_usd: 4.0
@@ -64,10 +94,27 @@ bot_action:
   conditional_min_confidence: 0.75
   conditional_max_disagreement_pp: 5.0
 
-# Kalshi BTC 15-Min Intelligence V6 (activated workflow)
+# Kalshi 15-Min Intelligence V6 (multi-asset workflow)
 v6:
   enabled: true
   series_ticker: KXBTC15M
+  series_tickers:
+    - KXBTC15M
+    - KXETH15M
+    - KXSOL15M
+    - KXXRP15M
+    - KXDOGE15M
+    - KXBNB15M
+    - KXHYPE15M
+    - KXADA15M
+    - KXBCH15M
+    - KXZEC15M
+    - KXNEAR15M
+    - KXTON15M
+  auto_discover_15m: false
+  include_commodity_15m: true
+  include_head_to_head_15m: false
+  execute_all_qualifying: true
   live_trading_enabled: true
   strict_min_gap_dollars: 0.25
   min_trades_per_bucket: 3
@@ -133,6 +180,22 @@ exit:
   min_seconds_to_expiry: 30.0
   series_tickers:
     - KXBTC15M
+    - KXETH15M
+    - KXSOL15M
+    - KXXRP15M
+    - KXDOGE15M
+    - KXBNB15M
+    - KXHYPE15M
+    - KXADA15M
+    - KXBCH15M
+    - KXZEC15M
+    - KXNEAR15M
+    - KXTON15M
+    - KXGOLD15M
+    - KXSILVER15M
+    - KXWTI15M
+    - KXINX15M
+    - KXNDQ15M
     - KXBTCD
 
 # Paper trading default — set live_trading_enabled: true AND execution.mode: live to trade real money
