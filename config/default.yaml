@@ -37,7 +37,7 @@ risk:
   max_loss_per_trade_usd: 3.0
   cooldown_seconds: 5.0
   min_seconds_to_expiry: 60.0
-  max_seconds_to_expiry_15m: 840
+  max_seconds_to_expiry_15m: 540
   # Hourly markets: execute only in the last 20 minutes (skip first ~40m).
   max_seconds_to_expiry_1h: 1200
 
@@ -87,7 +87,8 @@ v6:
   max_consecutive_losses: 4
   cooldown_after_loss_seconds: 120.0
   min_seconds_to_expiry: 60.0
-  max_seconds_to_expiry: 840.0
+  # Only enter in the last 9 minutes of the 15m contract (skip first ~6m).
+  max_seconds_to_expiry: 540.0
   min_open_seconds: 30.0
   tiers:
     enabled_for_live: true
