@@ -124,10 +124,26 @@ class TierEdgeConfig(BaseModel):
 
 
 class V6Config(BaseModel):
-    """Kalshi BTC 15-Min Intelligence V6 settings."""
+    """Kalshi 15-Min Intelligence V6 settings."""
 
     enabled: bool = True
     series_ticker: str = "KXBTC15M"
+    series_tickers: list[str] = Field(
+        default_factory=lambda: [
+            "KXBTC15M",
+            "KXETH15M",
+            "KXSOL15M",
+            "KXXRP15M",
+            "KXDOGE15M",
+            "KXBNB15M",
+            "KXHYPE15M",
+        ],
+        description="15M series to scan (used when auto_discover=false).",
+    )
+    auto_discover_15m: bool = False
+    include_commodity_15m: bool = True
+    include_head_to_head_15m: bool = False
+    execute_all_qualifying: bool = True
     live_trading_enabled: bool = False
     strict_min_gap_dollars: float = 0.05
     min_trades_per_bucket: int = 3
@@ -180,7 +196,25 @@ class ExitConfig(BaseModel):
     exit_on_edge_flip: bool = True
     min_seconds_to_expiry: float = 30.0
     series_tickers: list[str] = Field(
-        default_factory=lambda: ["KXBTC15M", "KXBTCD"],
+        default_factory=lambda: [
+            "KXBTC15M",
+            "KXETH15M",
+            "KXSOL15M",
+            "KXXRP15M",
+            "KXDOGE15M",
+            "KXBNB15M",
+            "KXHYPE15M",
+            "KXADA15M",
+            "KXBCH15M",
+            "KXZEC15M",
+            "KXNEAR15M",
+            "KXTON15M",
+            "KXGOLD15M",
+            "KXSILVER15M",
+            "KXWTI15M",
+            "KXINX15M",
+            "KXNDQ15M",
+        ],
         description="Only manage exits for these series.",
     )
 

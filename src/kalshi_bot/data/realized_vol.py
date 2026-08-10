@@ -35,7 +35,11 @@ class RealizedVolEstimate:
         return self.n_returns >= 30 and self.annualized_vol > 0.01
 
 
-def _kraken_ohlc(pair: str = "XBTUSD", interval_minutes: int = 1, limit: int = 720) -> tuple[float, np.ndarray]:
+def _kraken_ohlc(
+    pair: str = "XBTUSD",
+    interval_minutes: int = 1,
+    limit: int = 720,
+) -> tuple[float, np.ndarray]:
     """Return (last_close, close_array) from Kraken OHLC."""
     url = "https://api.kraken.com/0/public/OHLC"
     with httpx.Client(timeout=20.0) as client:
@@ -52,7 +56,7 @@ def _kraken_ohlc(pair: str = "XBTUSD", interval_minutes: int = 1, limit: int = 7
         series = value
         break
     if not series:
-        raise RuntimeError("Kraken OHLC empty")
+        raise RuntimeError(f"Kraken OHLC empty for {pair}")
     closes = np.array([float(row[4]) for row in series[-limit:]], dtype=float)
     return float(closes[-1]), closes
 
@@ -74,18 +78,19 @@ def estimate_realized_vol(
     horizon_seconds: float,
     bar_minutes: int = 1,
     lookback_bars: int = 180,
+    kraken_pair: str = "XBTUSD",
 ) -> RealizedVolEstimate:
-    """Estimate annualized and horizon vol from recent BTC closes.
-
-    Blends 1-minute and 5-minute windows, then applies a BTC-aware floor so
-    quiet hours do not produce unrealistically low short-horizon risk.
-    """
+    """Estimate annualized and horizon vol from recent Kraken OHLC closes."""
     horizon_seconds = max(float(horizon_seconds), 1.0)
     try:
-        spot, closes_1m = _kraken_ohlc(interval_minutes=1, limit=max(lookback_bars, 180) + 5)
+        spot, closes_1m = _kraken_ohlc(
+            pair=kraken_pair,
+            interval_minutes=1,
+            limit=max(lookback_bars, 180) + 5,
+        )
         ann_1m, n_1m = _ann_vol_from_closes(closes_1m, 60)
         try:
-            _, closes_5m = _kraken_ohlc(interval_minutes=5, limit=288)
+            _, closes_5m = _kraken_ohlc(pair=kraken_pair, interval_minutes=5, limit=288)
             ann_5m, n_5m = _ann_vol_from_closes(closes_5m, 300)
         except Exception:
             ann_5m, n_5m = ann_1m, 0
@@ -94,11 +99,11 @@ def estimate_realized_vol(
         if n_5m >= 20:
             blended = 0.55 * ann_1m + 0.45 * ann_5m
             n_returns = n_1m + n_5m
-            source = "kraken_ohlc_1m_5m"
+            source = f"kraken_ohlc_{kraken_pair.lower()}_1m_5m"
         else:
             blended = ann_1m
             n_returns = n_1m
-            source = "kraken_ohlc_1m"
+            source = f"kraken_ohlc_{kraken_pair.lower()}_1m"
 
         annualized = float(np.clip(blended, MIN_ANNUALIZED_VOL, MAX_ANNUALIZED_VOL))
         horizon_vol = annualized * math.sqrt(horizon_seconds / SECONDS_PER_YEAR)
@@ -112,7 +117,11 @@ def estimate_realized_vol(
             spot=spot,
         )
     except Exception as exc:
-        logger.warning("realized vol fetch failed: %s — using conservative fallback", exc)
+        logger.warning(
+            "realized vol fetch failed for %s: %s — using conservative fallback",
+            kraken_pair,
+            exc,
+        )
         annualized = 0.45
         return RealizedVolEstimate(
             annualized_vol=annualized,

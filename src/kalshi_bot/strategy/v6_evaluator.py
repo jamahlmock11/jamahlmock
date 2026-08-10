@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 
 from kalshi_bot.config import ArbitraryPolicyConfig, V6Config
@@ -111,10 +112,10 @@ def evaluate_market_audited(
     """Full audited evaluation with structured rejection codes."""
     config = engine.config
     now = now or datetime.now(timezone.utc)
-    engine.update_spot(spot)
-
     ticker = str(market.get("ticker") or "")
     series = str(market.get("series_ticker") or config.series_ticker)
+    engine.update_spot(spot, series_ticker=series)
+
     strike = float(market.get("strike") or spot)
     close = market.get("close_time")
     open_t = market.get("open_time")
@@ -195,13 +196,14 @@ def evaluate_market_audited(
         yes_bid=yes_bid,
         yes_ask=yes_ask,
         orderbook=orderbook,
-        prev_spread=engine._prev_spread,
-        prev_depth=engine._prev_depth,
+        prev_spread=engine._prev_spread.get(series),
+        prev_depth=engine._prev_depth.get(series),
     )
-    engine._prev_spread = micro.spread
-    engine._prev_depth = (micro.depth_bid_10, micro.depth_ask_10)
+    engine._prev_spread[series] = micro.spread
+    engine._prev_depth[series] = (micro.depth_bid_10, micro.depth_ask_10)
 
-    pa = compute_price_action(list(engine._price_history))
+    history = engine._price_history.get(series, deque())
+    pa = compute_price_action(list(history))
     if close:
         compute_time_features(close, now=now)
     regime = detect_regime(pa, micro)

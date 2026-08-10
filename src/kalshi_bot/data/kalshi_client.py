@@ -15,6 +15,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+from kalshi_bot.data.markets_15m import parse_series_ticker
+
 logger = logging.getLogger(__name__)
 
 
@@ -199,7 +201,7 @@ class KalshiClient:
             return self.request("POST", "/portfolio/events/orders", json_body=v2)
 
     def get_brti(self, index_id: str = "BRTI") -> float | None:
-        """Fetch CF Benchmarks BRTI via Kalshi authenticated passthrough."""
+        """Fetch CF Benchmarks RTI via Kalshi authenticated passthrough."""
         from kalshi_bot.data.cfbenchmarks import parse_brti_payload
 
         if not self.authenticated:
@@ -207,11 +209,11 @@ class KalshiClient:
         try:
             data = self.get("/cfbenchmarks/values", id=index_id)
         except Exception as exc:
-            logger.warning("BRTI passthrough failed: %s", exc)
+            logger.warning("RTI passthrough failed for %s: %s", index_id, exc)
             return None
         value = parse_brti_payload(data)
         if value is None:
-            logger.warning("unrecognized BRTI payload: %s", str(data)[:300])
+            logger.warning("unrecognized RTI payload for %s: %s", index_id, str(data)[:300])
         return value
 
 
@@ -225,13 +227,8 @@ def normalize_market(raw: dict) -> dict[str, Any]:
     no_bid = dollars(raw.get("no_bid_dollars"))
     no_ask = dollars(raw.get("no_ask_dollars"))
     last = dollars(raw.get("last_price_dollars"))
-    series = (raw.get("event_ticker") or "").split("-")[0]
-    # Infer series ticker more reliably from event ticker prefix
     event_ticker = raw.get("event_ticker") or ""
-    if event_ticker.startswith("KXBTC15M"):
-        series = "KXBTC15M"
-    elif event_ticker.startswith("KXBTCD"):
-        series = "KXBTCD"
+    series = parse_series_ticker(event_ticker) or event_ticker.split("-")[0]
     return {
         "ticker": raw.get("ticker"),
         "event_ticker": event_ticker,

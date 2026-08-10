@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from kalshi_bot.config import BotConfig
-from kalshi_bot.data.brti import resolve_spot
+from kalshi_bot.data.brti import resolve_series_spot, resolve_spot
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
+from kalshi_bot.data.markets_15m import get_series_spec, parse_series_ticker
 from kalshi_bot.data.realized_vol import estimate_realized_vol
 from kalshi_bot.execution.executor import Executor
 from kalshi_bot.models.forecast import forecast_prob_above
@@ -44,8 +45,9 @@ class ExitSignal:
 
 
 def _series_from_ticker(ticker: str) -> str:
-    if ticker.startswith("KXBTC15M"):
-        return "KXBTC15M"
+    parsed = parse_series_ticker(ticker)
+    if parsed:
+        return parsed
     if ticker.startswith("KXBTCD"):
         return "KXBTCD"
     return ticker.split("-")[0]
@@ -179,8 +181,14 @@ class PositionMonitor:
         if strike is None or strike <= 0:
             return None
 
-        spot_snap = resolve_spot(self.client, brti_cfg=self.config.brti)
-        realized = estimate_realized_vol(horizon_seconds=max(secs, 60.0))
+        series_spec = get_series_spec(pos.series)
+        if series_spec is not None:
+            spot_snap = resolve_series_spot(self.client, series_spec, brti_cfg=self.config.brti)
+            kraken_pair = series_spec.kraken_pair or "XBTUSD"
+        else:
+            spot_snap = resolve_spot(self.client, brti_cfg=self.config.brti, series_ticker=pos.series)
+            kraken_pair = "XBTUSD"
+        realized = estimate_realized_vol(horizon_seconds=max(secs, 60.0), kraken_pair=kraken_pair)
         forecast = forecast_prob_above(
             spot=spot_snap.brti,
             strike=float(strike),
