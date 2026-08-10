@@ -100,3 +100,9 @@ class RiskManager:
         self.state.exposure_usd += contracts * mis.kalshi_price
         self.state.last_trade_ts = time.time()
         self.state.traded_tickers.add(mis.ticker)
+
+    def release_position(self, ticker: str, contracts: int, cost_usd: float) -> None:
+        """Release exposure after an early exit sell."""
+        self.state.open_positions = max(0, self.state.open_positions - 1)
+        self.state.exposure_usd = max(0.0, self.state.exposure_usd - cost_usd)
+        self.state.traded_tickers.discard(ticker)

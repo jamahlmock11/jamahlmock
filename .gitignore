@@ -16,3 +16,4 @@ data/diagnostics/
 secrets/
 *.key
 .DS_Store
+data/logs/

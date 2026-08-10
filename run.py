@@ -36,6 +36,7 @@ from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
 from kalshi_bot.data.realized_vol import estimate_realized_vol
 from kalshi_bot.execution.executor import Executor
+from kalshi_bot.execution.position_monitor import PositionMonitor
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.models.probability import options_implied_prob_up
 from kalshi_bot.models.smile import VolSmile
@@ -437,6 +438,7 @@ def run_v6_loop(
         strict_gap=strict_gap,
     )
     sleep_s = interval or config.scan_interval_seconds
+    position_monitor = PositionMonitor(client, config, executor)
     iterations = 0
     try:
         smile = None
@@ -448,6 +450,7 @@ def run_v6_loop(
                         smile = load_ibit_smile(config.smile, allow_synthetic=False)
                     except Exception:
                         smile = None
+                position_monitor.manage_open_positions(smile=smile)
                 result = scanner.scan(smile)
                 if result.trades and config.v6.live_trading_enabled:
                     best = result.trades[0]
