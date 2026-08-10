@@ -10,6 +10,7 @@ from kalshi_bot.config import Settings, kalshi_base_url, load_config
 from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.execution.executor import Executor
+from kalshi_bot.execution.position_monitor import PositionMonitor
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.models.probability import ImpliedProbResult, MarketKind
 from kalshi_bot.strategy.decision import DecisionVerdict, TradeDecision
@@ -152,16 +153,19 @@ def run_once(allow_synthetic_smile: bool = True) -> int:
 def run_loop(max_iterations: int | None = None, *, forecast: bool = True) -> None:
     settings, config, client, scanner, executor = build_runtime()
     forecast_scanner = ForecastScanner(client, config)
+    position_monitor = PositionMonitor(client, config, executor)
     iterations = 0
     try:
         while max_iterations is None or iterations < max_iterations:
             iterations += 1
             try:
+                smile = None
                 if forecast:
                     try:
                         smile = load_ibit_smile(config.smile, allow_synthetic=False)
                     except Exception:
                         smile = None
+                    position_monitor.manage_open_positions(smile=smile)
                     result = forecast_scanner.scan(smile)
                     for decision in result.trades:
                         mis = decision_to_mispricing(decision)
@@ -173,6 +177,7 @@ def run_loop(max_iterations: int | None = None, *, forecast: bool = True) -> Non
                         logger.info("NO TRADE this cycle")
                 else:
                     smile = load_ibit_smile(config.smile, allow_synthetic=True)
+                    position_monitor.manage_open_positions(smile=smile)
                     result = scanner.scan(smile)
                     for mis in result.opportunities:
                         size = executor.risk.size(mis)

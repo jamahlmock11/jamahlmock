@@ -4,9 +4,9 @@ arbitrary:
   favorite_threshold: 0.52
   underdog_threshold: 0.48
   uncalibrated_shrink: 0.85
-  time_edge_bonus_max: 0.30
-  chase_min_gap_decay_pp: 3.0
-  chase_max_ask_rise: 0.02
+  time_edge_bonus_max: 0.40
+  chase_min_gap_decay_pp: 2.0
+  chase_max_ask_rise: 0.01
   block_favorite_without_edge: true
   require_calibration_for_conditional: true
 
@@ -20,12 +20,12 @@ brti:
 series:
   - ticker: KXBTCD
     enabled: true
-    min_edge_pp: 10.0
+    min_edge_pp: 20.0
     max_contracts: 400
     max_notional_usd: 200.0
   - ticker: KXBTC15M
     enabled: true
-    min_edge_pp: 20.0
+    min_edge_pp: 25.0
     max_contracts: 5
     max_notional_usd: 3.5
 
@@ -42,10 +42,10 @@ risk:
   max_seconds_to_expiry_1h: 1200
 
 forecast_gates:
-  min_confidence: 0.60
-  max_disagreement_pp: 10.0
-  min_edge_pp: 10.0
-  max_spread: 0.06
+  min_confidence: 0.70
+  max_disagreement_pp: 8.0
+  min_edge_pp: 20.0
+  max_spread: 0.05
   min_volume: 50.0
   min_seconds_to_expiry: 120.0
   # Last-20-minute entry window only (do not trade earlier in the hour).
@@ -59,22 +59,22 @@ forecast_gates:
 # Gap tiers: gap_pp = (model_probability − market_price) × 100
 # At model=60%: 35¢/25pp & 40¢/20pp → Strong BUY; 45¢/15pp → conditional; ≤50¢/10pp → No trade
 bot_action:
-  strong_buy_min_gap_pp: 20.0
-  conditional_min_gap_pp: 15.0
-  conditional_min_confidence: 0.70
-  conditional_max_disagreement_pp: 6.0
+  strong_buy_min_gap_pp: 25.0
+  conditional_min_gap_pp: 20.0
+  conditional_min_confidence: 0.75
+  conditional_max_disagreement_pp: 5.0
 
 # Kalshi BTC 15-Min Intelligence V6 (activated workflow)
 v6:
   enabled: true
   series_ticker: KXBTC15M
   live_trading_enabled: true
-  strict_min_gap_dollars: 0.05
+  strict_min_gap_dollars: 0.25
   min_trades_per_bucket: 3
   monte_carlo_sims: 5000
-  max_spread: 0.12
-  min_liquidity_score: 0.10
-  max_model_disagreement_pp: 28.0
+  max_spread: 0.08
+  min_liquidity_score: 0.20
+  max_model_disagreement_pp: 18.0
   min_pattern_examples: 5
   require_pattern_evidence: false
   journal_path: data/v6_trade_journal.db
@@ -92,14 +92,14 @@ v6:
   tiers:
     enabled_for_live: true
     use_raw_edge_for_tiers: true
-    edge_exceptional: 0.20
-    edge_strong: 0.15
-    edge_conditional: 0.08
-    edge_experimental: 0.05
-    min_net_edge_strong: 0.0
-    min_net_edge_experimental: -0.02
-    conditional_min_confidence: 0.50
-    conditional_requires_model_agree: false
+    edge_exceptional: 0.25
+    edge_strong: 0.20
+    edge_conditional: 0.15
+    edge_experimental: 0.12
+    min_net_edge_strong: 0.02
+    min_net_edge_experimental: 0.05
+    conditional_min_confidence: 0.70
+    conditional_requires_model_agree: true
     size_multiplier_exceptional: 1.0
     size_multiplier_strong: 1.0
     size_multiplier_conditional: 0.75
@@ -124,6 +124,16 @@ execution:
   use_taker: true
   price_improve_ticks: 0
   dry_run: false
+
+# Pre-expiry exits: cut losers and bail when model edge flips against the position
+exit:
+  enabled: true
+  max_drawdown_pct: 0.45
+  exit_on_edge_flip: true
+  min_seconds_to_expiry: 30.0
+  series_tickers:
+    - KXBTC15M
+    - KXBTCD
 
 # Paper trading default — set live_trading_enabled: true AND execution.mode: live to trade real money
 

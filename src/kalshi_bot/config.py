@@ -169,6 +169,22 @@ class ExecutionConfig(BaseModel):
     dry_run: bool = True
 
 
+class ExitConfig(BaseModel):
+    """Pre-expiry exit rules for open positions."""
+
+    enabled: bool = True
+    max_drawdown_pct: float = Field(
+        0.45,
+        description="Exit when unrealized loss exceeds this fraction of entry cost.",
+    )
+    exit_on_edge_flip: bool = True
+    min_seconds_to_expiry: float = 30.0
+    series_tickers: list[str] = Field(
+        default_factory=lambda: ["KXBTC15M", "KXBTCD"],
+        description="Only manage exits for these series.",
+    )
+
+
 class BotConfig(BaseModel):
     brti: BrtiConfig = Field(default_factory=BrtiConfig)
     arbitrary: ArbitraryPolicyConfig = Field(default_factory=ArbitraryPolicyConfig)
@@ -184,6 +200,7 @@ class BotConfig(BaseModel):
     bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
     v6: V6Config = Field(default_factory=V6Config)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    exit: ExitConfig = Field(default_factory=ExitConfig)
     scan_interval_seconds: float = 5.0
     kalshi_public_base: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_prod_base: str = "https://external-api.kalshi.com/trade-api/v2"
