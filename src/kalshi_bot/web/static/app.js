@@ -24,9 +24,20 @@ function signalClass(decision) {
 
 function renderLiveBanner(safety, freshness) {
   const el = document.getElementById("live-banner");
-  const live = safety?.status_label === "LIVE" || freshness?.live_trading_enabled;
+  const live =
+    safety?.status_label === "LIVE" ||
+    freshness?.live_trading_enabled ||
+    freshness?.status_label === "LIVE";
   el.textContent = live ? "LIVE TRADING" : "DISABLED";
   el.className = `live-banner ${live ? "live" : "disabled"}`;
+}
+
+function updateBannerFromHealth(health) {
+  if (!health) return;
+  renderLiveBanner(
+    { status_label: health.status_label },
+    { live_trading_enabled: health.live_trading_enabled }
+  );
 }
 
 function renderSafety(safety, freshness) {
@@ -300,6 +311,14 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 3000);
 }
 
+fetch("/api/health")
+  .then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  })
+  .then(updateBannerFromHealth)
+  .catch(() => {});
+
 fetch("/api/state")
   .then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -309,5 +328,9 @@ fetch("/api/state")
   .catch(() => {
     document.getElementById("meta").textContent =
       "Cannot reach API — is the server running? Try: python3 platform_run.py --web";
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(updateBannerFromHealth)
+      .catch(() => {});
   });
 connect();

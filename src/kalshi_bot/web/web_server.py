@@ -218,10 +218,19 @@ async def api_state():
 @app.get("/api/health")
 async def health():
     snap = GLOBAL_SCAN_STATE.get()
+    safety = snap.safety if snap else {}
+    freshness = snap.freshness if snap else {}
+    live = bool(
+        safety.get("status_label") == "LIVE"
+        or freshness.get("live_trading_enabled")
+    )
     return {
         "status": "ok",
         "has_data": snap is not None,
         "markets_scanned": snap.markets_scanned if snap else 0,
+        "live_trading_enabled": live,
+        "status_label": safety.get("status_label") or ("LIVE" if live else "DISABLED"),
+        "balance_usd": snap.balance_usd if snap else None,
     }
 
 
