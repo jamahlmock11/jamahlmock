@@ -54,17 +54,64 @@ def _load_run_module(root: Path):
     return mod
 
 
+def _start_platform_scan() -> None:
+    """Start production platform scan loop for dashboard data."""
+    global _scan_stop, _scan_cleanup
+
+    root = _find_repo_root()
+    if root is None:
+        return
+
+    try:
+        os.chdir(root)
+        from kalshi_bot.platform.runner import ProductionPlatform
+    except Exception as exc:
+        logger.warning("could not import ProductionPlatform: %s", exc)
+        return
+
+    _scan_stop = threading.Event()
+    resources: dict = {}
+
+    def scan_loop() -> None:
+        try:
+            platform = ProductionPlatform()
+            resources["platform"] = platform
+            interval = platform.config.scan_interval_seconds
+            while _scan_stop is not None and not _scan_stop.is_set():
+                try:
+                    platform.run_cycle(execute=False)
+                except Exception:
+                    logger.exception("platform background scan failed")
+                if _scan_stop.wait(interval):
+                    break
+        except Exception:
+            logger.exception("platform scan thread failed to start")
+
+    thread = threading.Thread(target=scan_loop, name="platform-web-scan", daemon=True)
+    thread.start()
+    _scan_cleanup = [resources]
+    logger.info("Background production platform scan started (repo: %s)", root)
+
+
 def _start_background_scan() -> None:
-    """Start mispricing scan loop so the dashboard has live data."""
+    """Start scan loop so the dashboard has live data (platform preferred)."""
     global _scan_stop, _scan_cleanup
 
     root = _find_repo_root()
     if root is None:
         logger.warning(
-            "run.py not found — start the dashboard with: python run.py --web "
+            "run.py not found — start the dashboard with: python3 platform_run.py --web "
             "(from the repository root)"
         )
         return
+
+    use_platform = os.environ.get("KALSHI_USE_PLATFORM", "1") != "0"
+    if use_platform and (root / "platform_run.py").is_file():
+        try:
+            _start_platform_scan()
+            return
+        except Exception as exc:
+            logger.warning("platform scan unavailable, falling back to run.py: %s", exc)
 
     try:
         run_mod = _load_run_module(root)
@@ -121,8 +168,14 @@ def _stop_background_scan() -> None:
     if _scan_stop is not None:
         _scan_stop.set()
     for resources in _scan_cleanup:
+        platform = resources.get("platform")
         tape = resources.get("trade_tape")
         client = resources.get("client")
+        if platform is not None:
+            try:
+                platform.close()
+            except Exception:
+                pass
         if tape is not None:
             try:
                 tape.close()
@@ -148,7 +201,7 @@ async def lifespan(app: FastAPI):
     _app_loop = None
 
 
-app = FastAPI(title="KXBTC15M Mispricing Dashboard", version="1.0", lifespan=lifespan)
+app = FastAPI(title="Kalshi Production Platform", version="2.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -211,7 +264,7 @@ def run_server(*, host: str = "0.0.0.0", port: int = 8080, with_scan: bool = Tru
         os.chdir(root)
 
     logger.info(
-        "Mispricing dashboard listening on http://%s:%d — "
+        "Production dashboard listening on http://%s:%d — "
         "in Cloud Agent, open the forwarded port URL from the Ports panel",
         host if host != "0.0.0.0" else "localhost",
         port,

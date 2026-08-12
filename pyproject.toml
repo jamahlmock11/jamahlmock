@@ -33,6 +33,7 @@ kalshi-forecast = "kalshi_bot.cli:forecast_main"
 kalshi-scan = "kalshi_bot.cli:scan_main"
 kalshi-demo = "kalshi_bot.cli:demo_main"
 kalshi-intelligence = "run:main"
+kalshi-platform = "platform_run:main"
 kalshi-web = "kalshi_bot.web.web_server:run_server"
 
 [tool.setuptools.packages.find]

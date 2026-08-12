@@ -3,43 +3,84 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KXBTC15M Mispricing Dashboard</title>
+  <title>Kalshi Production Platform</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header>
-    <h1>KXBTC15M Mispricing</h1>
+    <div>
+      <h1>Kalshi Production Platform</h1>
+      <p class="subtitle">KXBTC15M mispricing · KXBTCD 1-hour forecast</p>
+    </div>
     <div class="header-right">
+      <div id="live-banner" class="live-banner disabled">DISABLED</div>
       <div id="badges" class="badges"></div>
       <div id="meta" class="meta">Connecting…</div>
     </div>
   </header>
 
-  <section class="grid">
-    <div class="card" id="best-card">
-      <h2>Best Opportunity</h2>
-      <div id="best-detail" class="detail">Waiting for scan…</div>
+  <section class="grid safety-grid">
+    <div class="card" id="safety-card">
+      <h2>Live Safety</h2>
+      <div id="safety-detail" class="detail safety-grid-inner">Loading…</div>
     </div>
     <div class="card">
-      <h2>Calibration</h2>
-      <table id="calibration-table">
-        <thead><tr><th>Bucket</th><th>N</th><th>Empirical</th><th>Status</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <h2>Performance</h2>
+      <div id="performance-detail" class="detail">—</div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card" id="best-15m-card">
+      <h2>KXBTC15M — Best Opportunity</h2>
+      <div id="best-15m-detail" class="detail">Waiting for scan…</div>
+    </div>
+    <div class="card" id="best-1h-card">
+      <h2>KXBTCD — Best Opportunity</h2>
+      <div id="best-1h-detail" class="detail">Waiting for scan…</div>
     </div>
   </section>
 
   <section class="card">
-    <h2>All Opportunities</h2>
-    <table id="opp-table">
+    <h2>Live Markets — KXBTC15M</h2>
+    <table id="opp-table-15m">
       <thead>
         <tr>
-          <th>Ticker</th><th>T-rem</th><th>Model</th><th>YES¢</th><th>Net¢</th>
-          <th>Conf</th><th>Flow</th><th>Tape</th><th>Book</th><th>Decision</th>
+          <th>Ticker</th><th>T-rem</th><th>Strike</th><th>BTC</th>
+          <th>Model YES</th><th>YES¢</th><th>NO¢</th><th>Net¢</th>
+          <th>Conf</th><th>Regime</th><th>Signal</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
+  </section>
+
+  <section class="card">
+    <h2>Live Markets — KXBTCD</h2>
+    <table id="opp-table-1h">
+      <thead>
+        <tr>
+          <th>Ticker</th><th>T-rem</th><th>Strike</th><th>BTC</th>
+          <th>Model YES</th><th>YES¢</th><th>NO¢</th><th>Net¢</th>
+          <th>Conf</th><th>Regime</th><th>Signal</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Why Trade / Why Not</h2>
+      <div id="why-panel" class="detail why-panel">Select a market row or wait for scan.</div>
+    </div>
+    <div class="card">
+      <h2>Calibration</h2>
+      <table id="calibration-table">
+        <thead><tr><th>Bucket</th><th>N</th><th>Predicted</th><th>Actual</th><th>Brier</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="card">

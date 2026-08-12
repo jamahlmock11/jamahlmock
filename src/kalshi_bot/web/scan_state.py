@@ -17,9 +17,13 @@ class ScanSnapshot:
     balance_usd: float | None
     markets_scanned: int
     opportunities: list[dict[str, Any]] = field(default_factory=list)
+    opportunities_15m: list[dict[str, Any]] = field(default_factory=list)
+    opportunities_1h: list[dict[str, Any]] = field(default_factory=list)
     tape: dict[str, dict[str, Any]] = field(default_factory=dict)
     settlements: list[dict[str, Any]] = field(default_factory=list)
     calibration: list[dict[str, Any]] = field(default_factory=list)
+    performance: dict[str, Any] = field(default_factory=dict)
+    safety: dict[str, Any] = field(default_factory=dict)
     freshness: dict[str, Any] = field(default_factory=dict)
 
 
@@ -59,9 +63,17 @@ class ScanState:
             "balance_usd": snap.balance_usd,
             "markets_scanned": snap.markets_scanned,
             "opportunities": snap.opportunities,
+            "opportunities_15m": snap.opportunities_15m or [
+                o for o in snap.opportunities if o.get("strategy") == "KXBTC15M"
+            ],
+            "opportunities_1h": snap.opportunities_1h or [
+                o for o in snap.opportunities if o.get("strategy") == "KXBTCD"
+            ],
             "tape": snap.tape,
             "settlements": snap.settlements,
             "calibration": snap.calibration,
+            "performance": snap.performance,
+            "safety": snap.safety,
             "freshness": freshness,
         }
 

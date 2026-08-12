@@ -38,6 +38,45 @@ header {
 .badge.warn { color: var(--yellow); border-color: rgba(235, 203, 139, 0.35); }
 .badge.bad { color: var(--red); border-color: rgba(240, 113, 120, 0.35); }
 h1 { margin: 0; font-size: 1.25rem; }
+.subtitle { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.85rem; }
+.live-banner {
+  font-weight: 800;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  display: inline-block;
+}
+.live-banner.live {
+  background: rgba(240, 113, 120, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(240, 113, 120, 0.4);
+}
+.live-banner.disabled {
+  background: rgba(139, 155, 180, 0.12);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.safety-grid { grid-template-columns: 1.5fr 1fr; }
+.safety-grid-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 1rem;
+  font-size: 0.9rem;
+}
+.safety-grid-inner .label { color: var(--muted); }
+.block-reason { grid-column: 1 / -1; color: var(--yellow); margin-top: 0.5rem; }
+.why-panel { white-space: pre-line; }
+.why-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  white-space: pre-line;
+}
+.why-yes { border-color: rgba(61, 214, 140, 0.35); }
+.why-no { border-color: rgba(240, 113, 120, 0.35); }
 .meta { color: var(--muted); font-size: 0.9rem; }
 .grid {
   display: grid;
@@ -55,14 +94,21 @@ h1 { margin: 0; font-size: 1.25rem; }
 .grid .card { margin: 0; }
 h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .detail { font-size: 1rem; white-space: pre-line; }
-.detail .buy { color: var(--green); font-weight: 700; font-size: 1.2rem; }
-.detail .no-trade { color: var(--red); font-weight: 700; }
-.detail .wait { color: var(--yellow); font-weight: 700; }
+.detail .buy, .buy, tr.buy { color: var(--green); }
+.detail .strong-buy, tr.strong-buy { color: #7dffb8; font-weight: 700; }
+.detail .no-trade, tr.no-trade { color: var(--muted); }
+.detail .wait, tr.wait { color: var(--yellow); }
+.detail .error, tr.error { color: var(--red); }
+.detail .buy { font-weight: 700; font-size: 1.1rem; }
+.detail .strong-buy { font-weight: 800; font-size: 1.15rem; }
+.detail .no-trade { font-weight: 700; }
 table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; }
 .buy-row { color: var(--green); }
 .no-row { color: var(--muted); }
+tr { cursor: pointer; }
+tr:hover { background: rgba(94, 179, 255, 0.06); }
 #settlements { list-style: none; padding: 0; margin: 0; }
 #settlements li { padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 @media (max-width: 900px) {
