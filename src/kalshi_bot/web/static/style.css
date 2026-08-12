@@ -22,8 +22,21 @@ header {
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 1rem;
 }
+.header-right { text-align: right; }
+.badges { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; margin-bottom: 0.35rem; }
+.badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.badge.ok { color: var(--green); border-color: rgba(61, 214, 140, 0.35); }
+.badge.warn { color: var(--yellow); border-color: rgba(235, 203, 139, 0.35); }
+.badge.bad { color: var(--red); border-color: rgba(240, 113, 120, 0.35); }
 h1 { margin: 0; font-size: 1.25rem; }
 .meta { color: var(--muted); font-size: 0.9rem; }
 .grid {

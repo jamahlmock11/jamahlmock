@@ -23,6 +23,15 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 _ws_clients: list[WebSocket] = []
 _scan_stop: threading.Event | None = None
 _scan_cleanup: list = []
+_app_loop: asyncio.AbstractEventLoop | None = None
+
+
+def request_broadcast() -> None:
+    """Schedule an immediate WebSocket push from a sync scan thread."""
+    loop = _app_loop
+    if loop is None or not loop.is_running():
+        return
+    loop.call_soon_threadsafe(lambda: asyncio.create_task(broadcast_state()))
 
 
 def _find_repo_root() -> Path | None:
@@ -130,10 +139,13 @@ def _stop_background_scan() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _app_loop
+    _app_loop = asyncio.get_running_loop()
     if getattr(app.state, "with_scan", True):
         _start_background_scan()
     yield
     _stop_background_scan()
+    _app_loop = None
 
 
 app = FastAPI(title="KXBTC15M Mispricing Dashboard", version="1.0", lifespan=lifespan)
@@ -167,8 +179,10 @@ async def ws_live(websocket: WebSocket):
     try:
         await websocket.send_json(GLOBAL_SCAN_STATE.to_dict())
         while True:
-            await asyncio.sleep(2)
-            await websocket.send_json(GLOBAL_SCAN_STATE.to_dict())
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                await websocket.send_json(GLOBAL_SCAN_STATE.to_dict())
     except WebSocketDisconnect:
         pass
     finally:

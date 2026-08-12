@@ -31,6 +31,7 @@ def test_api_state_with_snapshot():
                 }
             ],
             calibration=[{"range": "70%-80%", "n_trades": 5, "empirical_win_rate": 0.8, "calibrated": True}],
+            freshness={"scan_duration_ms": 120.0, "brti_official": True, "kalshi_ws_connected": True},
         )
     )
     client = TestClient(app)
@@ -39,3 +40,4 @@ def test_api_state_with_snapshot():
     assert data["spot"] == 65000.0
     assert len(data["opportunities"]) == 1
     assert data["calibration"][0]["n_trades"] == 5
+    assert data["freshness"]["kalshi_ws_connected"] is True

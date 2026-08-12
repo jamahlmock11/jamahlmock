@@ -4,6 +4,40 @@ function fmtTime(seconds) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function badge(text, level = "") {
+  return `<span class="badge ${level}">${text}</span>`;
+}
+
+function renderFreshness(freshness, data) {
+  const el = document.getElementById("badges");
+  if (!freshness) {
+    el.innerHTML = "";
+    return;
+  }
+  const items = [];
+  const brtiOk = freshness.brti_official;
+  items.push(badge(`BRTI ${freshness.brti_source || "—"}`, brtiOk ? "ok" : "warn"));
+  items.push(badge(`scan ${freshness.scan_duration_ms || "?"}ms`, "ok"));
+  items.push(
+    badge(
+      `age ${freshness.scan_age_seconds ?? "?"}s`,
+      (freshness.scan_age_seconds || 0) <= 3 ? "ok" : "warn"
+    )
+  );
+  if (freshness.kalshi_ws_connected) {
+    items.push(badge(`WS live ${freshness.kalshi_ws_last_message_age ?? "?"}s`, "ok"));
+  } else {
+    items.push(badge("WS offline", "bad"));
+  }
+  if (freshness.btc_stale) items.push(badge("BTC stale", "warn"));
+  if (freshness.live_trading_enabled) {
+    items.push(badge("LIVE", "bad"));
+  } else {
+    items.push(badge("paper", "ok"));
+  }
+  el.innerHTML = items.join("");
+}
+
 function renderBest(opp) {
   const el = document.getElementById("best-detail");
   if (!opp) {
@@ -26,6 +60,7 @@ Volatility: ${opp.volatility || "—"}
 Order flow: ${opp.order_flow || "—"}
 Liquidity: ${opp.liquidity || "—"}
 Tape TPS: ${(opp.tape_tps || 0).toFixed(2)}
+Price source: ${opp.price_source || "rest"}${opp.kalshi_stale ? " (stale)" : ""}
 
 <span class="${cls}">${opp.decision}</span>
 ${opp.reason ? "— " + opp.reason : ""}`;
@@ -46,6 +81,7 @@ function renderTable(opps) {
       <td>${o.confidence || ""}</td>
       <td>${o.order_flow || ""}</td>
       <td>${(o.tape_tps || 0).toFixed(2)}</td>
+      <td>${o.price_source || "rest"}${o.kalshi_stale ? "⚠" : ""}</td>
       <td>${o.decision || ""}</td>`;
     tbody.appendChild(tr);
   }
@@ -87,9 +123,11 @@ function applyState(data) {
     renderTable([]);
     renderCalibration([]);
     renderSettlements([]);
+    renderFreshness(null, null);
     return;
   }
   meta.textContent = `BTC $${Number(data.spot).toLocaleString()} · scanned ${data.markets_scanned} · ${data.asof || ""}`;
+  renderFreshness(data.freshness || {}, data);
   const opps = data.opportunities || [];
   renderBest(opps[0] || null);
   renderTable(opps);

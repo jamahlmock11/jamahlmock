@@ -62,7 +62,7 @@ bot_action:
 v6:
   enabled: true
   series_ticker: KXBTC15M
-  live_trading_enabled: true
+  live_trading_enabled: false
   min_trades_per_bucket: 3
   monte_carlo_sims: 5000
   journal_path: data/v6_trade_journal.db
@@ -91,11 +91,11 @@ smile:
   dividend_yield: 0.0
 
 execution:
-  mode: live
+  mode: paper
   time_in_force: immediate_or_cancel
   use_taker: true
   price_improve_ticks: 0
-  dry_run: false
+  dry_run: true
 
 # Pre-expiry exits: cut losers and bail when model edge flips against the position
 exit:
@@ -109,6 +109,6 @@ exit:
 
 # Paper trading default — set live_trading_enabled: true AND execution.mode: live to trade real money
 
-scan_interval_seconds: 5.0
+scan_interval_seconds: 2.0
 fee_rate: 0.07
 fee_multiplier: 1.0

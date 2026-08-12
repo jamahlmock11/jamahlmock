@@ -72,6 +72,8 @@ def evaluate_market_mispricing(
     fee_rate: float = 0.07,
     recent_trades: list[dict] | None = None,
     kalshi_stale: bool = False,
+    orderbook: dict | None = None,
+    orderbook_source: str = "rest",
 ) -> tuple[MarketEvaluationRecord, MispricingOpportunity, TradeDecision]:
     """Full mispricing pipeline for one KXBTC15M market."""
     config: V6Config = engine.config
@@ -95,19 +97,21 @@ def evaluate_market_mispricing(
     filter_checks: list[FilterCheck] = []
     all_rejections: list[RejectionCode] = []
 
-    orderbook = None
+    orderbook_data = orderbook
     ob_status = "MISSING"
-    if engine.client and ticker:
+    if orderbook_data is not None:
+        ob_status = orderbook_source.upper()
+    elif engine.client and ticker:
         try:
-            orderbook = engine.client.get_orderbook(ticker, depth=10)
-            ob_status = "FRESH"
+            orderbook_data = engine.client.get_orderbook(ticker, depth=10)
+            ob_status = "REST"
         except Exception:
             ob_status = "MISSING"
 
     micro = compute_microstructure(
         yes_bid=yes_bid,
         yes_ask=yes_ask,
-        orderbook=orderbook,
+        orderbook=orderbook_data,
         prev_spread=engine._prev_spread,
         prev_depth=engine._prev_depth,
         recent_trades=recent_trades,

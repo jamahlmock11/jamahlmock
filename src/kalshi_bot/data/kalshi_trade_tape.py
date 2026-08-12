@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from kalshi_bot.data.kalshi_client import KalshiClient, dollars
+from kalshi_bot.data.kalshi_orderbook import OrderbookCache, OrderbookQuote
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +116,18 @@ class TradeTapeBuffer:
 
 
 class KalshiTradeTapeService:
-    """Fetches REST trade history and optionally streams via WebSocket."""
+    """Fetches REST trade history and streams live trades + orderbook via WebSocket."""
 
-    def __init__(self, client: KalshiClient, *, buffer: TradeTapeBuffer | None = None) -> None:
+    def __init__(
+        self,
+        client: KalshiClient,
+        *,
+        buffer: TradeTapeBuffer | None = None,
+        orderbook: OrderbookCache | None = None,
+    ) -> None:
         self.client = client
         self.buffer = buffer or TradeTapeBuffer()
+        self.orderbook = orderbook or OrderbookCache()
         self._ws = None
         self._subscribed: set[str] = set()
 
@@ -150,6 +158,24 @@ class KalshiTradeTapeService:
     def tape_stats(self, ticker: str) -> TapeStats:
         return self.buffer.stats(ticker)
 
+    def orderbook_quote(self, ticker: str) -> OrderbookQuote | None:
+        return self.orderbook.quote(ticker)
+
+    def orderbook_dict(self, ticker: str) -> dict | None:
+        return self.orderbook.to_orderbook_dict(ticker)
+
+    def feed_status(self) -> dict[str, Any]:
+        ws_status = self._ws.status() if self._ws is not None else {
+            "connected": False,
+            "last_message_at": None,
+            "last_error": None,
+            "subscribed_tickers": len(self._subscribed),
+        }
+        return {
+            **ws_status,
+            "orderbook_tickers": self.orderbook.ticker_count(),
+        }
+
     def _start_ws_if_needed(self) -> None:
         if self._ws is not None:
             self._ws.subscribe(list(self._subscribed))
@@ -157,11 +183,11 @@ class KalshiTradeTapeService:
         try:
             from kalshi_bot.data.kalshi_websocket import KalshiWebSocketFeed
 
-            self._ws = KalshiWebSocketFeed(self.client, self.buffer)
+            self._ws = KalshiWebSocketFeed(self.client, self.buffer, self.orderbook)
             self._ws.start()
             self._ws.subscribe(list(self._subscribed))
         except Exception as exc:
-            logger.warning("WebSocket trade feed unavailable: %s (REST only)", exc)
+            logger.warning("WebSocket feed unavailable: %s (REST only)", exc)
 
     def close(self) -> None:
         if self._ws is not None:

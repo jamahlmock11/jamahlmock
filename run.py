@@ -121,6 +121,9 @@ class V6Scanner:
         self.rules = engine.rules
 
     def scan(self, smile: VolSmile | None = None) -> V6ScanResult:
+        import time as time_mod
+
+        scan_t0 = time_mod.time()
         now = datetime.now(timezone.utc)
         fallback = smile.spot_btc if smile else None
         spot_snap = resolve_spot(self.client, fallback_btc=fallback, brti_cfg=self.config.brti)
@@ -188,10 +191,27 @@ class V6Scanner:
             if use_mispricing:
                 recent_trades = None
                 tape_stats = None
+                orderbook = None
+                orderbook_source = "rest"
+                kalshi_stale = False
                 if self.trade_tape is not None:
                     self.trade_tape.ensure_subscription([ticker])
                     recent_trades = self.trade_tape.recent_trades(ticker)
                     tape_stats = self.trade_tape.tape_stats(ticker)
+                    ob_quote = self.trade_tape.orderbook_quote(ticker)
+                    if ob_quote is not None:
+                        market = dict(market)
+                        if ob_quote.yes_bid is not None:
+                            market["yes_bid"] = ob_quote.yes_bid
+                        if ob_quote.yes_ask is not None:
+                            market["yes_ask"] = ob_quote.yes_ask
+                        if ob_quote.no_ask is not None:
+                            market["no_ask"] = ob_quote.no_ask
+                        orderbook = self.trade_tape.orderbook_dict(ticker)
+                        orderbook_source = "ws"
+                        kalshi_stale = ob_quote.stale
+                    elif tape_stats is not None:
+                        kalshi_stale = tape_stats.stale
                 audit, opp, trade_dec = evaluate_market_mispricing(
                     self.engine,
                     market,
@@ -204,7 +224,9 @@ class V6Scanner:
                     now=now,
                     fee_rate=self.config.fee_rate,
                     recent_trades=recent_trades,
-                    kalshi_stale=tape_stats.stale if tape_stats else False,
+                    kalshi_stale=kalshi_stale,
+                    orderbook=orderbook,
+                    orderbook_source=orderbook_source,
                 )
                 self.engine.get_monitor().record(audit)
                 decision = V6Decision(
@@ -292,6 +314,9 @@ class V6Scanner:
             engine=self.engine,
             settlement=self.settlement,
             settlements=settlements,
+            spot_snap=spot_snap,
+            btc=btc,
+            scan_duration_ms=(time_mod.time() - scan_t0) * 1000,
         )
         logger.info(
             "%s %s scan: markets=%d trades=%d no_trade=%d spot=%.2f vol=%.1f%%",
@@ -317,14 +342,25 @@ def _publish_scan_state(
     engine: V6IntelligenceEngine | None = None,
     settlement: SettlementIngestor | None = None,
     settlements: list[dict] | None = None,
+    spot_snap: Any | None = None,
+    btc: Any | None = None,
+    scan_duration_ms: float = 0.0,
 ) -> None:
+    import time as time_mod
+
     tape: dict[str, dict] = {}
     opps: list[dict] = []
+    feed_status = trade_tape.feed_status() if trade_tape is not None else {}
+    ws_last = feed_status.get("last_message_at")
+    ws_age = round(time_mod.time() - ws_last, 1) if ws_last else None
     for row in result.mispricing_rows:
         ticker = row.ticker
         tape_tps = 0.0
+        price_source = "rest"
+        ob_stale = False
         if trade_tape is not None:
             tstats = trade_tape.tape_stats(ticker)
+            ob_quote = trade_tape.orderbook_quote(ticker)
             tape[ticker] = {
                 "tps": tstats.trades_per_second,
                 "buy_pressure": tstats.buy_pressure,
@@ -334,6 +370,9 @@ def _publish_scan_state(
                 "source": tstats.source,
             }
             tape_tps = tstats.trades_per_second
+            if ob_quote is not None:
+                price_source = ob_quote.source
+                ob_stale = ob_quote.stale
         opps.append(
             {
                 "ticker": ticker,
@@ -349,6 +388,8 @@ def _publish_scan_state(
                 "order_flow": row.opportunity.order_flow_label,
                 "liquidity": row.opportunity.liquidity_label,
                 "tape_tps": tape_tps,
+                "price_source": price_source,
+                "kalshi_stale": ob_stale or row.opportunity.kalshi_stale,
                 "decision": row.trade.action.value,
                 "reason": row.trade.reason,
             }
@@ -356,6 +397,16 @@ def _publish_scan_state(
     calibration: list[dict] = []
     if engine is not None and settlement is not None:
         calibration = settlement.calibration_summary(engine.calibrator)
+    freshness = {
+        "scan_duration_ms": round(scan_duration_ms, 1),
+        "brti_source": spot_snap.source if spot_snap else result.spot_source,
+        "brti_official": spot_snap.is_official if spot_snap else result.spot_official,
+        "btc_stale": btc.stale if btc is not None else False,
+        "kalshi_ws_connected": feed_status.get("connected", False),
+        "kalshi_ws_last_message_age": ws_age,
+        "kalshi_ws_error": feed_status.get("last_error"),
+        "live_trading_enabled": load_config().v6.live_trading_enabled,
+    }
     GLOBAL_SCAN_STATE.update(
         ScanSnapshot(
             asof=result.asof,
@@ -367,6 +418,7 @@ def _publish_scan_state(
             tape=tape,
             settlements=settlements or [],
             calibration=calibration,
+            freshness=freshness,
         )
     )
 
