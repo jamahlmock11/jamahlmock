@@ -55,15 +55,26 @@ def resolve_spot(
     """Resolve BRTI for both 15m and 1h bots.
 
     Priority:
-    1. Kalshi authenticated CF Benchmarks passthrough
-    2. Direct CF Benchmarks API credentials (if configured)
-    3. Public CF Benchmarks BRTI page summary (official displayed RTI)
+    1. CF Benchmarks public BRTI page (https://www.cfbenchmarks.com/data/indices/BRTI)
+    2. Kalshi authenticated CF Benchmarks passthrough
+    3. Direct CF Benchmarks API credentials (if configured)
     4. Exchange BTC proxies (scanning only; not settlement grade)
+    5. Provided fallback / Yahoo BTC-USD
     """
     cfg = brti_cfg or BrtiConfig()
     settings = settings or Settings()
 
     if cfg.prefer_official:
+        if cfg.public_summary_enabled:
+            quote = fetch_brti_public_summary(index_id=cfg.index_id)
+            if quote is not None:
+                logger.info(
+                    "using official CF Benchmarks BRTI from %s (%.2f)",
+                    quote.source,
+                    quote.value,
+                )
+                return _quote_to_snapshot(quote)
+
         brti = client.get_brti()
         if brti is not None and brti > 0:
             return SpotSnapshot(brti=brti, source="cfbenchmarks_kalshi_passthrough", is_official=True)
@@ -77,16 +88,6 @@ def resolve_spot(
                 index_id=cfg.index_id,
             )
             if quote is not None:
-                return _quote_to_snapshot(quote)
-
-        if cfg.public_summary_enabled:
-            quote = fetch_brti_public_summary(index_id=cfg.index_id)
-            if quote is not None:
-                logger.info(
-                    "using official CF Benchmarks BRTI from %s (%.2f)",
-                    quote.source,
-                    quote.value,
-                )
                 return _quote_to_snapshot(quote)
 
     if not cfg.allow_exchange_proxy:

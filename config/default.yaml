@@ -2,7 +2,8 @@
 arbitrary:
   enabled: false
 
-# CF Benchmarks BRTI — official Kalshi settlement index (https://www.cfbenchmarks.com/data/indices/BRTI)
+# CF Benchmarks BRTI — primary: https://www.cfbenchmarks.com/data/indices/BRTI
+# Fallbacks: Kalshi /cfbenchmarks passthrough → licensed API → exchange proxies
 brti:
   index_id: BRTI
   prefer_official: true

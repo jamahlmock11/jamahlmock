@@ -40,7 +40,11 @@ class ArbitraryPolicyConfig(BaseModel):
 
 
 class BrtiConfig(BaseModel):
-    """CF Benchmarks BRTI (Kalshi settlement index) resolution."""
+    """CF Benchmarks BRTI (Kalshi settlement index) resolution.
+
+    Primary source is the public CF Benchmarks index page (BRTI).
+    Kalshi passthrough, licensed API, and exchange proxies are fallbacks.
+    """
 
     index_id: str = "BRTI"
     prefer_official: bool = True
