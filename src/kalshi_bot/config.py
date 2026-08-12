@@ -152,6 +152,7 @@ class QualityRules15m(BaseModel):
     max_model_disagreement_pp: float | None = None
     require_pattern_evidence: bool = False
     min_pattern_examples: int | None = None
+    stale_data_stop_trading: bool = True
 
 
 class V6Config(BaseModel):
@@ -196,6 +197,7 @@ class Rules15mConfig(BaseModel):
     """Trading rules for the 15-minute bot (KXBTC15M / V6 workflow)."""
 
     enabled: bool = False
+    mode: Literal["mispricing", "legacy"] = "mispricing"
     strict_edge: StrictEdgeRules = Field(default_factory=StrictEdgeRules)
     tiers: TierEdgeConfig = Field(default_factory=_cleared_tier_config)
     arbitrary: ArbitraryPolicyConfig = Field(
@@ -203,6 +205,7 @@ class Rules15mConfig(BaseModel):
     )
     bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
     quality: QualityRules15m = Field(default_factory=QualityRules15m)
+    time_buckets: dict[str, dict] = Field(default_factory=dict)
 
 
 class ExecutionConfig(BaseModel):

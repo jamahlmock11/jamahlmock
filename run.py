@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""Kalshi BTC 15-Min Intelligence V6 — integrated workflow runner.
+"""Kalshi BTC 15-Min Intelligence V6 — mispricing workflow runner.
 
-Workflow: "Kalshi BTC 15-Min Intelligence" (V6, activated)
-
-STRICT EDGE RULE (hard filter):
-  Only recommend BUY when market price is ≥20–25¢ below model probability.
-  Example: agent thinks 60% UP → market YES must be ≤35–40¢.
-  No exceptions for A/B setups; replaces legacy 6pp/3pp gap tiers.
+Finds KXBTC15M contracts where calibrated settlement probability differs
+meaningfully from executable Kalshi prices after fees, spread, slippage, and risk.
 
 Usage:
-  python run.py                  # single V6 scan cycle
-  python run.py --loop           # continuous 15m intelligence loop
-  python run.py --loop -n 30     # 30 iterations then exit
-  python run.py --strict 0.25     # 25¢ minimum gap (extra strict)
+  python run.py                  # single scan + dashboard
+  python run.py --loop           # continuous loop
+  python run.py --loop -n 30     # 30 iterations
+  python run.py --execute        # live execution (requires prod keys + execution.mode: live)
 """
 
 from __future__ import annotations
@@ -31,6 +27,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from kalshi_bot.config import BotConfig, Settings, V6Config, kalshi_base_url, load_config, load_rules_15m
+from kalshi_bot.data.btc_data_engine import BtcDataEngine, BtcMarketSnapshot
 from kalshi_bot.data.brti import resolve_spot
 from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
@@ -40,15 +37,23 @@ from kalshi_bot.execution.position_monitor import PositionMonitor
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.models.probability import options_implied_prob_up
 from kalshi_bot.models.smile import VolSmile
+from kalshi_bot.strategy.dashboard import (
+    print_mispricing_dashboard,
+    print_opportunities_table,
+    print_scan_summary,
+)
+from kalshi_bot.strategy.mispricing_engine import MispricingOpportunity, TradeAction
+from kalshi_bot.strategy.mispricing_evaluator import evaluate_market_mispricing
+from kalshi_bot.strategy.trade_filter import TradeDecision
 from kalshi_bot.strategy.mispricing import Mispricing, Side
-from kalshi_bot.strategy.v6_upgrades import V6Decision, V6IntelligenceEngine
+from kalshi_bot.strategy.v6_upgrades import Regime, V6Decision, V6IntelligenceEngine
 from kalshi_bot.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 console = Console()
 
-WORKFLOW_NAME = "Kalshi BTC 15-Min Intelligence"
-WORKFLOW_VERSION = "V6"
+WORKFLOW_NAME = "KXBTC15M Mispricing"
+WORKFLOW_VERSION = "V7"
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +67,14 @@ class V6TradeCandidate:
 
 
 @dataclass
+class MispricingCandidate:
+    ticker: str
+    decision: V6Decision
+    opportunity: MispricingOpportunity
+    trade: TradeDecision
+
+
+@dataclass
 class V6ScanResult:
     spot: float
     spot_source: str
@@ -72,6 +85,9 @@ class V6ScanResult:
     asof: datetime
     vol_ann: float
     top_blockers: list[tuple[str, int]] = field(default_factory=list)
+    btc: BtcMarketSnapshot | None = None
+    balance_usd: float | None = None
+    mispricing_rows: list[MispricingCandidate] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -79,18 +95,21 @@ class V6ScanResult:
 # ---------------------------------------------------------------------------
 
 class V6Scanner:
-    """Scan KXBTC15M markets through the V6 intelligence engine."""
+    """Scan KXBTC15M markets for mispricing vs calibrated settlement probability."""
 
     def __init__(
         self,
         client: KalshiClient,
         config: BotConfig,
         engine: V6IntelligenceEngine,
+        btc_engine: BtcDataEngine,
     ) -> None:
         self.client = client
         self.config = config
         self.engine = engine
         self.v6 = config.v6
+        self.btc_engine = btc_engine
+        self.rules = engine.rules
 
     def scan(self, smile: VolSmile | None = None) -> V6ScanResult:
         now = datetime.now(timezone.utc)
@@ -104,10 +123,27 @@ class V6Scanner:
         if smile is not None:
             vol = 0.6 * vol + 0.4 * smile.atm_iv
 
+        btc = self.btc_engine.refresh(
+            reference_price=spot,
+            reference_source=spot_snap.source,
+            is_official=spot_snap.is_official,
+            annualized_vol=vol,
+        )
+
+        balance_usd: float | None = None
+        if self.client.authenticated:
+            try:
+                bal = self.client.get_balance()
+                balance_usd = float(bal.get("balance", 0)) / 100.0
+            except Exception as exc:
+                logger.warning("balance fetch failed: %s", exc)
+
         trades: list[V6TradeCandidate] = []
         no_trades: list[V6TradeCandidate] = []
+        mispricing_rows: list[MispricingCandidate] = []
         scanned = 0
         blocker_counts: Counter[str] = Counter()
+        use_mispricing = self.rules.enabled and self.rules.mode == "mispricing"
 
         for raw in self.client.iter_markets(self.v6.series_ticker, status="open"):
             market = normalize_market(raw)
@@ -138,15 +174,65 @@ class V6Scanner:
                 except Exception:
                     pass
 
-            decision = self.engine.evaluate(
-                market,
-                spot=spot,
-                vol=vol,
-                options_prob=options_prob,
-                now=now,
-                spot_source=spot_snap.source,
-                spot_is_official=spot_snap.is_official,
-            )
+            if use_mispricing:
+                audit, opp, trade_dec = evaluate_market_mispricing(
+                    self.engine,
+                    market,
+                    spot=spot,
+                    spot_source=spot_snap.source,
+                    spot_is_official=spot_snap.is_official,
+                    vol=vol,
+                    btc=btc,
+                    options_prob=options_prob,
+                    now=now,
+                    fee_rate=self.config.fee_rate,
+                )
+                self.engine.get_monitor().record(audit)
+                decision = V6Decision(
+                    verdict=audit.verdict,
+                    model_probability=audit.model_prob_up,
+                    market_price=(
+                        audit.yes_side.executable_ask
+                        if audit.verdict == "TRADE_YES"
+                        else audit.no_side.executable_ask
+                        if audit.verdict == "TRADE_NO"
+                        else None
+                    ),
+                    strict_gap_dollars=max(
+                        audit.yes_side.raw_edge_dollars, audit.no_side.raw_edge_dollars
+                    ),
+                    confidence=audit.model_confidence,
+                    explainability=audit.explainability,
+                    regime=Regime.CHOP,
+                    monte_carlo_prob=audit.monte_carlo_prob,
+                    calibrated=audit.calibrated,
+                    pattern_examples=0,
+                    pattern_win_rate=None,
+                    quality=None,
+                    ensemble=None,
+                    micro=None,
+                    reasons=(audit.trade_reason,),
+                    blockers=tuple(
+                        c.value for c in audit.all_rejection_codes if c.value != "NONE"
+                    ),
+                    contracts=audit.contracts,
+                    audit_record=audit,
+                )
+                mispricing_rows.append(
+                    MispricingCandidate(ticker=ticker, decision=decision, opportunity=opp, trade=trade_dec)
+                )
+            else:
+                decision = self.engine.evaluate(
+                    market,
+                    spot=spot,
+                    vol=vol,
+                    options_prob=options_prob,
+                    now=now,
+                    spot_source=spot_snap.source,
+                    spot_is_official=spot_snap.is_official,
+                    btc_snapshot=btc,
+                )
+
             candidate = V6TradeCandidate(ticker=ticker, decision=decision)
             if decision.verdict != "NO_TRADE":
                 trades.append(candidate)
@@ -160,6 +246,7 @@ class V6Scanner:
                 blocker_counts[primary] += 1
 
         trades.sort(key=lambda c: c.decision.strict_gap_dollars, reverse=True)
+        mispricing_rows.sort(key=lambda r: r.opportunity.best_net_edge, reverse=True)
         top_blockers = blocker_counts.most_common(8)
 
         logger.info(
@@ -182,6 +269,9 @@ class V6Scanner:
             asof=now,
             vol_ann=vol,
             top_blockers=top_blockers,
+            btc=btc,
+            balance_usd=balance_usd,
+            mispricing_rows=mispricing_rows,
         )
 
 
@@ -217,6 +307,36 @@ def v6_to_mispricing(ticker: str, decision: V6Decision) -> Mispricing | None:
 # ---------------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------------
+
+def _print_mispricing_results(result: V6ScanResult, top: int) -> None:
+    if result.btc is None:
+        _print_header(result)
+        return
+    print_scan_summary(
+        asof=result.asof,
+        markets_scanned=result.markets_scanned,
+        trades=len(result.trades),
+        btc=result.btc,
+        balance_usd=result.balance_usd,
+    )
+    if result.mispricing_rows:
+        print_opportunities_table(
+            [(r.ticker, r.opportunity, r.trade) for r in result.mispricing_rows[:top]]
+        )
+        best = result.mispricing_rows[0]
+        print_mispricing_dashboard(
+            series="KXBTC15M",
+            btc=result.btc,
+            opp=best.opportunity,
+            decision=best.trade,
+            balance_usd=result.balance_usd,
+        )
+    elif result.trades:
+        row = result.trades[0]
+        console.print(f"[green]Best trade:[/green] {row.decision.verdict} {row.ticker}")
+    else:
+        console.print("[yellow]No qualifying mispricing opportunities this cycle.[/yellow]")
+
 
 def _print_header(result: V6ScanResult) -> None:
     official = "official BRTI" if result.spot_official else "PROXY"
@@ -327,6 +447,15 @@ def _print_near_misses(candidates: list[V6TradeCandidate], top: int) -> None:
 
 
 def _print_verdict(result: V6ScanResult) -> None:
+    if result.mispricing_rows:
+        best_row = result.mispricing_rows[0]
+        if best_row.trade.action in (TradeAction.BUY_YES, TradeAction.BUY_NO):
+            console.print(f"\n[green bold]VERDICT: {best_row.trade.action.value}[/green bold]")
+        elif best_row.trade.action == TradeAction.WAIT:
+            console.print(f"\n[yellow bold]VERDICT: WAIT[/yellow bold] — {best_row.trade.reason}")
+        else:
+            console.print(f"\n[red bold]VERDICT: NO TRADE[/red bold] — {best_row.trade.reason}")
+        return
     if result.trades:
         best = result.trades[0]
         d = best.decision
@@ -339,18 +468,26 @@ def _print_verdict(result: V6ScanResult) -> None:
             console.print(f"  · {r}")
     else:
         console.print("\n[yellow bold]ENGINE VERDICT: NO TRADE[/yellow bold]")
-        console.print("15-minute bot rules are disabled — configure config/rules_15m.yaml")
+        if result.top_blockers:
+            console.print(f"Top blocker: {result.top_blockers[0][0]}")
 
 
 # ---------------------------------------------------------------------------
 # Runtime builder
 # ---------------------------------------------------------------------------
 
+def _assert_live_only(config: BotConfig) -> None:
+    if config.execution.mode != "live" or config.execution.dry_run:
+        raise SystemExit(
+            "15-minute bot requires live execution: set execution.mode=live and dry_run=false"
+        )
+
+
 def build_v6_runtime(
     settings: Settings | None = None,
     *,
     strict_gap: float | None = None,
-) -> tuple[Settings, BotConfig, KalshiClient, V6IntelligenceEngine, V6Scanner, Executor]:
+) -> tuple[Settings, BotConfig, KalshiClient, V6IntelligenceEngine, V6Scanner, Executor, BtcDataEngine]:
     settings = settings or Settings()
     config = load_config(settings.config_path)
     rules = load_rules_15m()
@@ -363,11 +500,14 @@ def build_v6_runtime(
         api_key_id=settings.kalshi_api_key_id,
         private_key_pem=settings.resolve_private_key_pem(),
     )
-    engine = V6IntelligenceEngine(config.v6, client=client, rules=rules)
-    scanner = V6Scanner(client, config, engine)
+    if not client.authenticated:
+        logger.warning("Kalshi client not authenticated — balance/execution unavailable")
+    btc_engine = BtcDataEngine()
+    engine = V6IntelligenceEngine(config.v6, client=client, rules=rules, btc_engine=btc_engine)
+    scanner = V6Scanner(client, config, engine, btc_engine)
     risk = RiskManager(config)
     executor = Executor(client, config, risk)
-    return settings, config, client, engine, scanner, executor
+    return settings, config, client, engine, scanner, executor, btc_engine
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +522,7 @@ def run_v6_once(
     top: int = 10,
 ) -> V6ScanResult:
     """Single V6 intelligence scan cycle."""
-    settings, config, client, engine, scanner, executor = build_v6_runtime(
+    settings, config, client, engine, scanner, executor, _btc = build_v6_runtime(
         strict_gap=strict_gap,
     )
     try:
@@ -394,8 +534,7 @@ def run_v6_once(
 
         result = scanner.scan(smile)
 
-        _print_header(result)
-        _print_opportunity_monitor(result.trades + result.no_trades)
+        _print_mispricing_results(result, top)
         _print_trades(result.trades, top)
         _print_near_misses(result.no_trades, top)
 
@@ -436,7 +575,7 @@ def run_v6_loop(
     strict_gap: float | None = None,
 ) -> None:
     """Continuous V6 intelligence loop."""
-    settings, config, client, engine, scanner, executor = build_v6_runtime(
+    settings, config, client, engine, scanner, executor, _btc = build_v6_runtime(
         strict_gap=strict_gap,
     )
     sleep_s = interval or config.scan_interval_seconds
@@ -501,7 +640,7 @@ def collect_diagnostics(
     allow_synthetic_smile: bool = False,
 ) -> None:
     """Paper-mode diagnostic collection until target evaluations reached."""
-    settings, config, client, engine, scanner, _executor = build_v6_runtime()
+    settings, config, client, engine, scanner, _executor, _btc = build_v6_runtime()
     monitor = engine.get_monitor()
     collected = 0
     iterations = 0
@@ -606,6 +745,10 @@ def main(argv: list[str] | None = None) -> None:
     if not load_config().v6.enabled:
         console.print("[red]V6 workflow disabled in config (v6.enabled=false)[/red]")
         sys.exit(1)
+
+    config = load_config()
+    if args.execute or args.loop:
+        _assert_live_only(config)
 
     if args.loop:
         run_v6_loop(

@@ -1,36 +1,53 @@
-# Kalshi 15-minute bot trading rules
-# Previous rules removed — configure replacements below, then set enabled: true.
+# KXBTC15M mispricing bot — finds calibrated settlement prob vs executable Kalshi price.
+# NOT up/down prediction: every trade requires net edge after fees, spread, slippage, risk.
 
-enabled: false
+enabled: true
+mode: mispricing
 
-strict_edge:
-  min_gap_dollars: null
+# Arbitrary policy OFF — use mispricing pipeline only
+arbitrary:
+  enabled: false
 
+# Legacy tier thresholds OFF (null = disabled)
 tiers:
   enabled_for_live: false
-  use_raw_edge_for_tiers: true
   edge_exceptional: null
   edge_strong: null
   edge_conditional: null
   edge_experimental: null
-  min_net_edge_strong: null
-  min_net_edge_experimental: null
-  conditional_min_confidence: null
-  conditional_requires_model_agree: false
-  size_multiplier_exceptional: 1.0
-  size_multiplier_strong: 1.0
-  size_multiplier_conditional: 0.75
-  size_multiplier_experimental: 0.50
-  experimental_max_contracts: 1
 
-arbitrary:
-  enabled: false
+strict_edge:
+  min_gap_dollars: null
 
 bot_action: {}
 
 quality:
-  max_spread: null
-  min_liquidity_score: null
-  max_model_disagreement_pp: null
+  max_spread: 0.08
+  min_liquidity_score: 0.15
+  max_model_disagreement_pp: 25.0
   require_pattern_evidence: false
   min_pattern_examples: null
+  stale_data_stop_trading: true
+
+# Time-bucket edge floors (strategy tightens/loosens by minutes remaining)
+time_buckets:
+  "15_10":
+    min_net_edge_dollars: 0.14
+    min_raw_edge_dollars: 0.18
+    size_multiplier: 0.60
+  "10_7":
+    min_net_edge_dollars: 0.12
+    min_raw_edge_dollars: 0.16
+    size_multiplier: 0.75
+  "7_5":
+    min_net_edge_dollars: 0.10
+    min_raw_edge_dollars: 0.14
+    size_multiplier: 0.85
+  "5_3":
+    min_net_edge_dollars: 0.08
+    min_raw_edge_dollars: 0.12
+    size_multiplier: 1.0
+  "3_1":
+    min_net_edge_dollars: 0.06
+    min_raw_edge_dollars: 0.10
+    size_multiplier: 0.70

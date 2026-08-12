@@ -687,11 +687,13 @@ class V6IntelligenceEngine:
         client: KalshiClient | None = None,
         *,
         rules: Rules15mConfig | None = None,
+        btc_engine: Any | None = None,
     ) -> None:
         self.config = config
         self.rules = rules or load_rules_15m()
         self.client = client
         self.arbitrary_cfg = self.rules.arbitrary
+        self.btc_engine = btc_engine
         self.calibrator = ProbabilityCalibrator(config.min_trades_per_bucket)
         self.chase_guard = EdgeChaseGuard(ttl_seconds=self.arbitrary_cfg.chase_ttl_seconds)
         self.journal = TradeJournal(config.journal_path)
@@ -723,20 +725,44 @@ class V6IntelligenceEngine:
         spot_source: str = "unknown",
         spot_is_official: bool = False,
         record_diagnostics: bool = True,
+        btc_snapshot: Any | None = None,
     ) -> V6Decision:
         """Evaluate market; returns V6Decision backed by full audit record."""
-        from kalshi_bot.strategy.v6_evaluator import evaluate_market_audited
+        if self.rules.enabled and self.rules.mode == "mispricing":
+            from kalshi_bot.data.btc_data_engine import BtcDataEngine
+            from kalshi_bot.strategy.mispricing_evaluator import evaluate_market_mispricing
 
-        audit = evaluate_market_audited(
-            self,
-            market,
-            spot=spot,
-            spot_source=spot_source,
-            spot_is_official=spot_is_official,
-            vol=vol,
-            options_prob=options_prob,
-            now=now,
-        )
+            engine_btc = self.btc_engine or BtcDataEngine()
+            btc = btc_snapshot or engine_btc.refresh(
+                reference_price=spot,
+                reference_source=spot_source,
+                is_official=spot_is_official,
+                annualized_vol=vol,
+            )
+            audit, _opp, _dec = evaluate_market_mispricing(
+                self,
+                market,
+                spot=spot,
+                spot_source=spot_source,
+                spot_is_official=spot_is_official,
+                vol=vol,
+                btc=btc,
+                options_prob=options_prob,
+                now=now,
+            )
+        else:
+            from kalshi_bot.strategy.v6_evaluator import evaluate_market_audited
+
+            audit = evaluate_market_audited(
+                self,
+                market,
+                spot=spot,
+                spot_source=spot_source,
+                spot_is_official=spot_is_official,
+                vol=vol,
+                options_prob=options_prob,
+                now=now,
+            )
         if record_diagnostics:
             self.get_monitor().record(audit)
 
