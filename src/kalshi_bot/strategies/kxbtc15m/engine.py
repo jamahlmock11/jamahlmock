@@ -15,7 +15,7 @@ from kalshi_bot.data.kalshi_trade_tape import KalshiTradeTapeService
 from kalshi_bot.data.realized_vol import estimate_realized_vol
 from kalshi_bot.models.ensemble import ModelVote, combine_models
 from kalshi_bot.models.probability import options_implied_prob_up
-from kalshi_bot.models.volatility_regime import classify_vol_regime
+from kalshi_bot.models.volatility_regime import classify_vol_regime, neutral_regime
 from kalshi_bot.platform.decision_states import TradeSignal, signal_from_action
 from kalshi_bot.platform.observation import DataQuality, ObservationBundle
 from kalshi_bot.strategies.base import MarketDecision, StrategyEngine
@@ -77,7 +77,10 @@ class Kxbtc15mStrategy(StrategyEngine):
             vol = 0.6 * vol + 0.4 * self._smile.atm_iv
             obs.add("ibit_atm_iv", self._smile.atm_iv, source="ibit_smile", quality=DataQuality.FRESH)
 
-        regime = classify_vol_regime(vol, recent_vols=[rv.annualized_vol])
+        if self.config.platform.enable_vol_regime:
+            regime = classify_vol_regime(vol, recent_vols=[rv.annualized_vol])
+        else:
+            regime = neutral_regime(vol)
         obs.add("vol_regime", regime.regime.value, source="volatility_regime", detail=regime.reason)
 
         btc = self.btc_engine.refresh(
@@ -187,13 +190,14 @@ class Kxbtc15mStrategy(StrategyEngine):
                 kalshi_stale=kalshi_stale,
                 orderbook=orderbook,
                 orderbook_source=orderbook_source,
+                use_settlement_model=self.config.platform.enable_settlement_model,
             )
             self.engine.get_monitor().record(audit)
 
-            votes = [
-                ModelVote("settlement", audit.model_prob_up, 0.45, audit.model_confidence),
-                ModelVote("monte_carlo", audit.monte_carlo_prob, 0.25, audit.model_confidence),
-            ]
+            votes = []
+            if self.config.platform.enable_settlement_model:
+                votes.append(ModelVote("settlement", audit.model_prob_up, 0.45, audit.model_confidence))
+            votes.append(ModelVote("monte_carlo", audit.monte_carlo_prob, 0.50 if not self.config.platform.enable_settlement_model else 0.25, audit.model_confidence))
             if options_prob is not None:
                 votes.append(ModelVote("options_implied", options_prob, 0.20, 0.6))
             votes.append(
@@ -218,10 +222,11 @@ class Kxbtc15mStrategy(StrategyEngine):
             why_not = ""
             why_trade = ""
             if signal in (TradeSignal.BUY_YES, TradeSignal.BUY_NO, TradeSignal.STRONG_BUY_YES, TradeSignal.STRONG_BUY_NO):
+                regime_label = regime.regime.value if self.config.platform.enable_vol_regime else "off"
                 why_trade = (
-                    f"P(settle YES)={audit.model_prob_up:.1%} vs executable; "
+                    f"P(YES)={audit.model_prob_up:.1%} vs executable; "
                     f"net edge={net_edge*100:.1f}¢; conf={audit.model_confidence:.0%}; "
-                    f"regime={regime.regime.value}"
+                    f"regime={regime_label}"
                 )
             else:
                 why_not = self._explain_no_trade(audit, trade_dec_reason, net_edge, regime.edge_multiplier)
@@ -241,7 +246,7 @@ class Kxbtc15mStrategy(StrategyEngine):
                     raw_edge=max(audit.yes_side.raw_edge_dollars, audit.no_side.raw_edge_dollars),
                     net_edge=net_edge,
                     confidence=ensemble.confidence,
-                    regime=regime.regime.value,
+                    regime="off" if not self.config.platform.enable_vol_regime else regime.regime.value,
                     strike=float(strike or spot),
                     seconds_to_expiry=secs,
                     btc_spot=spot,

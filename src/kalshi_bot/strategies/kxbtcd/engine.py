@@ -7,7 +7,7 @@ import time
 from kalshi_bot.config import BotConfig
 from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient
-from kalshi_bot.models.volatility_regime import classify_vol_regime
+from kalshi_bot.models.volatility_regime import classify_vol_regime, neutral_regime
 from kalshi_bot.platform.decision_states import TradeSignal
 from kalshi_bot.platform.observation import DataQuality, ObservationBundle
 from kalshi_bot.strategies.base import MarketDecision, StrategyEngine
@@ -42,7 +42,12 @@ class KxbtcdStrategy(StrategyEngine):
             quality=DataQuality.FRESH if result.spot.is_official else DataQuality.DEGRADED,
             latency_ms=(time.time() - t0) * 1000,
         )
-        regime = classify_vol_regime(result.realized_vol_ann)
+        if self.config.platform.enable_vol_regime:
+            regime = classify_vol_regime(result.realized_vol_ann)
+            regime_label = regime.regime.value
+        else:
+            regime = neutral_regime(result.realized_vol_ann)
+            regime_label = "off"
 
         decisions: list[MarketDecision] = []
         for d in result.decisions:
@@ -68,7 +73,7 @@ class KxbtcdStrategy(StrategyEngine):
                     raw_edge=d.edge_pp / 100.0,
                     net_edge=d.edge_after_fees_pp / 100.0,
                     confidence=d.forecast.confidence,
-                    regime=regime.regime.value,
+                    regime=regime_label,
                     strike=d.strike,
                     seconds_to_expiry=d.seconds_to_expiry,
                     btc_spot=result.spot.brti,

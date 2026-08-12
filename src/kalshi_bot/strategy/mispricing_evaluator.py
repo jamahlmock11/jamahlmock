@@ -15,7 +15,7 @@ from kalshi_bot.strategy.decision_record import (
 )
 from kalshi_bot.strategy.mispricing_engine import MispricingOpportunity, TradeAction, evaluate_mispricing
 from kalshi_bot.strategy.rejection_codes import RejectionCode
-from kalshi_bot.strategy.settlement_probability import estimate_settlement_probability
+from kalshi_bot.strategy.settlement_probability import SettlementProbability, estimate_settlement_probability
 from kalshi_bot.strategy.time_buckets import TimeBucket, classify_time_bucket
 from kalshi_bot.strategy.trade_filter import TradeDecision, filter_trade
 from kalshi_bot.strategy.v6_upgrades import (
@@ -23,6 +23,7 @@ from kalshi_bot.strategy.v6_upgrades import (
     compute_microstructure,
     compute_price_action,
     detect_regime,
+    monte_carlo_binary,
 )
 
 
@@ -74,6 +75,7 @@ def evaluate_market_mispricing(
     kalshi_stale: bool = False,
     orderbook: dict | None = None,
     orderbook_source: str = "rest",
+    use_settlement_model: bool = True,
 ) -> tuple[MarketEvaluationRecord, MispricingOpportunity, TradeDecision]:
     """Full mispricing pipeline for one KXBTC15M market."""
     config: V6Config = engine.config
@@ -126,16 +128,39 @@ def evaluate_market_mispricing(
     else:
         kalshi_stale_flag = micro.spread <= 0 and yes_ask is None
 
-    settlement = estimate_settlement_probability(
-        spot=spot,
-        strike=strike,
-        seconds_to_expiry=secs,
-        annualized_vol=vol,
-        btc=btc,
-        options_prob=options_prob,
-        calibrator=engine.calibrator,
-        monte_carlo_sims=config.monte_carlo_sims,
-    )
+    if use_settlement_model:
+        settlement = estimate_settlement_probability(
+            spot=spot,
+            strike=strike,
+            seconds_to_expiry=secs,
+            annualized_vol=vol,
+            btc=btc,
+            options_prob=options_prob,
+            calibrator=engine.calibrator,
+            monte_carlo_sims=config.monte_carlo_sims,
+        )
+    else:
+        mc_mean, _, _ = monte_carlo_binary(
+            spot=spot,
+            strike=strike,
+            vol=vol,
+            seconds=secs,
+            n_sims=config.monte_carlo_sims,
+        )
+        conf = 0.5 + 0.25 * btc.cross_exchange_agreement
+        if btc.is_official:
+            conf += 0.1
+        settlement = SettlementProbability(
+            prob_above_strike=mc_mean,
+            prob_below_strike=1.0 - mc_mean,
+            raw_prob=mc_mean,
+            calibrated=False,
+            gbm_prob=mc_mean,
+            monte_carlo_prob=mc_mean,
+            momentum_adjustment=0.0,
+            confidence=min(0.95, conf),
+            disagreement_pp=0.0,
+        )
 
     opp = evaluate_mispricing(
         ticker=ticker,

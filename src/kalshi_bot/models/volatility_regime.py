@@ -78,3 +78,16 @@ def classify_vol_regime(
         allow_new_entries=True,
         reason="normal volatility",
     )
+
+
+def neutral_regime(annualized_vol: float = 0.45) -> RegimeAssessment:
+    """Vol regime disabled — no gating or size/edge adjustments."""
+    return RegimeAssessment(
+        VolRegime.NORMAL_VOL,
+        annualized_vol,
+        0.5,
+        edge_multiplier=1.0,
+        size_multiplier=1.0,
+        allow_new_entries=True,
+        reason="vol regime disabled",
+    )

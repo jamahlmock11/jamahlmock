@@ -194,7 +194,9 @@ class ProductionPlatform:
             else:
                 decisions_1h = rows
 
-        settlements = self.settlement.ingest(self.client, self.engine)
+        settlements: list[dict] = []
+        if self.config.platform.enable_settlement_ingestion:
+            settlements = self.settlement.ingest(self.client, self.engine)
 
         if execute:
             self._maybe_execute(decisions_15m + decisions_1h, obs)
@@ -226,19 +228,20 @@ class ProductionPlatform:
             fill = self.executor.execute(mis, size, ignore_cooldown=True)
             if fill and fill.mode == "live":
                 self.safety.record_order_confirmed()
-                self.settlement.record_entry(
-                    ticker=d.ticker,
-                    side="yes" if mis.side == Side.YES else "no",
-                    entry_price=fill.price,
-                    contracts=fill.contracts,
-                    prediction=d.model_prob_yes if mis.side == Side.YES else d.model_prob_no,
-                    confidence=d.confidence,
-                    features=d.features,
-                    seconds_to_expiry=d.seconds_to_expiry,
-                    volatility=d.features.get("realized_vol", 0.45),
-                    net_edge=d.net_edge,
-                    reason=d.why_trade,
-                )
+                if self.config.platform.enable_settlement_ingestion:
+                    self.settlement.record_entry(
+                        ticker=d.ticker,
+                        side="yes" if mis.side == Side.YES else "no",
+                        entry_price=fill.price,
+                        contracts=fill.contracts,
+                        prediction=d.model_prob_yes if mis.side == Side.YES else d.model_prob_no,
+                        confidence=d.confidence,
+                        features=d.features,
+                        seconds_to_expiry=d.seconds_to_expiry,
+                        volatility=d.features.get("realized_vol", 0.45),
+                        net_edge=d.net_edge,
+                        reason=d.why_trade,
+                    )
 
     def _publish_dashboard(self, result: PlatformCycleResult, balance_usd: float | None) -> None:
         from datetime import datetime, timezone
@@ -277,37 +280,42 @@ class ProductionPlatform:
 
         spot = opps[0]["btc"] if opps else 0.0
         cal_records: list[tuple[float, bool]] = []
-        for row in self.settlement.settled_trades(limit=500):
-            cal_records.append((float(row["prediction"]), bool(row["won"])))
-        for s in result.settlements:
-            pred = s.get("prediction")
-            won = s.get("won")
-            if pred is not None and won is not None:
-                cal_records.append((float(pred), bool(won)))
-        calibration = calibration_table(cal_records) if cal_records else self.settlement.calibration_summary(
-            self.engine.calibrator
-        )
-
-        settled = [
-            SettledTrade(
-                ticker=r["ticker"],
-                side=r["side"],
-                prediction=float(r["prediction"]),
-                won=bool(r["won"]),
-                pnl=float(r["pnl"] or 0),
-                net_edge=float(r["net_edge"] or 0),
-                seconds_to_expiry=float(r["seconds_to_expiry"] or 0),
-                confidence=float(r.get("confidence") or 0),
-            )
-            for r in self.settlement.settled_trades(limit=500)
-        ]
+        settled: list[SettledTrade] = []
+        if self.config.platform.enable_settlement_ingestion:
+            for row in self.settlement.settled_trades(limit=500):
+                cal_records.append((float(row["prediction"]), bool(row["won"])))
+            for s in result.settlements:
+                pred = s.get("prediction")
+                won = s.get("won")
+                if pred is not None and won is not None:
+                    cal_records.append((float(pred), bool(won)))
+            settled = [
+                SettledTrade(
+                    ticker=r["ticker"],
+                    side=r["side"],
+                    prediction=float(r["prediction"]),
+                    won=bool(r["won"]),
+                    pnl=float(r["pnl"] or 0),
+                    net_edge=float(r["net_edge"] or 0),
+                    seconds_to_expiry=float(r["seconds_to_expiry"] or 0),
+                    confidence=float(r.get("confidence") or 0),
+                )
+                for r in self.settlement.settled_trades(limit=500)
+            ]
+        calibration = calibration_table(cal_records) if cal_records else []
+        if not calibration and self.config.platform.enable_settlement_ingestion:
+            calibration = self.settlement.calibration_summary(self.engine.calibrator)
         time_buckets = time_bucket_performance(
             settled,
             min_seconds=self.config.v6.min_seconds_to_expiry,
             max_seconds=self.config.v6.max_seconds_to_expiry,
         )
         bucket_summary = summarize_time_buckets(time_buckets)
-        micro_report = self.micro_calibrator.report()
+        micro_report = (
+            self.micro_calibrator.report()
+            if self.config.platform.enable_settlement_ingestion
+            else {"status": "disabled", "n_total": 0}
+        )
 
         total_pnl = sum(t.pnl for t in settled)
         wins = sum(1 for t in settled if t.won)

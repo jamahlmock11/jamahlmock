@@ -247,6 +247,9 @@ class PlatformConfig(BaseModel):
     enable_kxbtc15m: bool = True
     enable_kxbtcd: bool = True
     max_data_age_seconds: float = 12.0
+    enable_settlement_ingestion: bool = False
+    enable_settlement_model: bool = False
+    enable_vol_regime: bool = False
 
 
 class BotConfig(BaseModel):

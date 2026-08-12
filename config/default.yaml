@@ -7,6 +7,9 @@ platform:
   enable_kxbtc15m: true
   enable_kxbtcd: true
   max_data_age_seconds: 12.0
+  enable_settlement_ingestion: false
+  enable_settlement_model: false
+  enable_vol_regime: false
 
 # Arbitrary policy — hourly bot only (15m uses mispricing pipeline)
 arbitrary:
