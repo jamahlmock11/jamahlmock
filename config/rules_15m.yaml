@@ -1,0 +1,36 @@
+# Kalshi 15-minute bot trading rules
+# Previous rules removed — configure replacements below, then set enabled: true.
+
+enabled: false
+
+strict_edge:
+  min_gap_dollars: null
+
+tiers:
+  enabled_for_live: false
+  use_raw_edge_for_tiers: true
+  edge_exceptional: null
+  edge_strong: null
+  edge_conditional: null
+  edge_experimental: null
+  min_net_edge_strong: null
+  min_net_edge_experimental: null
+  conditional_min_confidence: null
+  conditional_requires_model_agree: false
+  size_multiplier_exceptional: 1.0
+  size_multiplier_strong: 1.0
+  size_multiplier_conditional: 0.75
+  size_multiplier_experimental: 0.50
+  experimental_max_contracts: 1
+
+arbitrary:
+  enabled: false
+
+bot_action: {}
+
+quality:
+  max_spread: null
+  min_liquidity_score: null
+  max_model_disagreement_pp: null
+  require_pattern_evidence: false
+  min_pattern_examples: null

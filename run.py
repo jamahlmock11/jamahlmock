@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from kalshi_bot.config import BotConfig, Settings, V6Config, kalshi_base_url, load_config
+from kalshi_bot.config import BotConfig, Settings, V6Config, kalshi_base_url, load_config, load_rules_15m
 from kalshi_bot.data.brti import resolve_spot
 from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
@@ -339,7 +339,7 @@ def _print_verdict(result: V6ScanResult) -> None:
             console.print(f"  · {r}")
     else:
         console.print("\n[yellow bold]ENGINE VERDICT: NO TRADE[/yellow bold]")
-        console.print("Strict 20–25¢ edge rule + quality gates not satisfied.")
+        console.print("15-minute bot rules are disabled — configure config/rules_15m.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -353,15 +353,17 @@ def build_v6_runtime(
 ) -> tuple[Settings, BotConfig, KalshiClient, V6IntelligenceEngine, V6Scanner, Executor]:
     settings = settings or Settings()
     config = load_config(settings.config_path)
+    rules = load_rules_15m()
     if strict_gap is not None:
-        config.v6.strict_min_gap_dollars = strict_gap
+        rules.enabled = True
+        rules.strict_edge.min_gap_dollars = strict_gap
     setup_logging(settings.log_level)
     client = KalshiClient(
         base_url=kalshi_base_url(settings, config),
         api_key_id=settings.kalshi_api_key_id,
         private_key_pem=settings.resolve_private_key_pem(),
     )
-    engine = V6IntelligenceEngine(config.v6, client=client, arbitrary_cfg=config.arbitrary)
+    engine = V6IntelligenceEngine(config.v6, client=client, rules=rules)
     scanner = V6Scanner(client, config, engine)
     risk = RiskManager(config)
     executor = Executor(client, config, risk)

@@ -98,29 +98,60 @@ class ForecastGateConfig(BaseModel):
 
 
 class TierEdgeConfig(BaseModel):
-    """Edge quality tiers — separate frequency from quality."""
+    """Edge quality tiers — separate trade frequency from trade quality."""
 
     enabled_for_live: bool = True
     use_raw_edge_for_tiers: bool = True
-    edge_exceptional: float = 0.20
-    edge_strong: float = 0.15
-    edge_conditional: float = 0.08
-    edge_experimental: float = 0.05
-    min_net_edge_strong: float = 0.0
-    min_net_edge_experimental: float = -0.02
-    conditional_min_confidence: float = 0.50
+    edge_exceptional: float | None = 0.20
+    edge_strong: float | None = 0.15
+    edge_conditional: float | None = 0.08
+    edge_experimental: float | None = 0.05
+    min_net_edge_strong: float | None = 0.0
+    min_net_edge_experimental: float | None = -0.02
+    conditional_min_confidence: float | None = 0.50
     conditional_requires_model_agree: bool = False
     size_multiplier_exceptional: float = 1.0
     size_multiplier_strong: float = 1.0
     size_multiplier_conditional: float = 0.75
     size_multiplier_experimental: float = 0.50
     experimental_max_contracts: int = 1
-    min_edge_a_plus: float = 0.20
-    min_edge_a: float = 0.15
-    min_edge_b: float = 0.05
-    min_confidence_a_plus: float = 0.65
-    min_confidence_a: float = 0.55
-    min_confidence_b: float = 0.45
+    min_edge_a_plus: float | None = 0.20
+    min_edge_a: float | None = 0.15
+    min_edge_b: float | None = 0.05
+    min_confidence_a_plus: float | None = 0.65
+    min_confidence_a: float | None = 0.55
+    min_confidence_b: float | None = 0.45
+
+
+def _cleared_tier_config() -> TierEdgeConfig:
+    return TierEdgeConfig(
+        enabled_for_live=False,
+        edge_exceptional=None,
+        edge_strong=None,
+        edge_conditional=None,
+        edge_experimental=None,
+        min_net_edge_strong=None,
+        min_net_edge_experimental=None,
+        conditional_min_confidence=None,
+        min_edge_a_plus=None,
+        min_edge_a=None,
+        min_edge_b=None,
+        min_confidence_a_plus=None,
+        min_confidence_a=None,
+        min_confidence_b=None,
+    )
+
+
+class StrictEdgeRules(BaseModel):
+    min_gap_dollars: float | None = None
+
+
+class QualityRules15m(BaseModel):
+    max_spread: float | None = None
+    min_liquidity_score: float | None = None
+    max_model_disagreement_pp: float | None = None
+    require_pattern_evidence: bool = False
+    min_pattern_examples: int | None = None
 
 
 class V6Config(BaseModel):
@@ -159,6 +190,19 @@ class BotActionConfig(BaseModel):
     conditional_min_gap_pp: float = 15.0
     conditional_min_confidence: float = 0.70
     conditional_max_disagreement_pp: float = 6.0
+
+
+class Rules15mConfig(BaseModel):
+    """Trading rules for the 15-minute bot (KXBTC15M / V6 workflow)."""
+
+    enabled: bool = False
+    strict_edge: StrictEdgeRules = Field(default_factory=StrictEdgeRules)
+    tiers: TierEdgeConfig = Field(default_factory=_cleared_tier_config)
+    arbitrary: ArbitraryPolicyConfig = Field(
+        default_factory=lambda: ArbitraryPolicyConfig(enabled=False)
+    )
+    bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
+    quality: QualityRules15m = Field(default_factory=QualityRules15m)
 
 
 class ExecutionConfig(BaseModel):
@@ -235,6 +279,14 @@ def load_config(path: str | Path | None = None) -> BotConfig:
         raw = yaml.safe_load(cfg_path.read_text()) or {}
         return BotConfig.model_validate(raw)
     return BotConfig()
+
+
+def load_rules_15m(path: str | Path | None = None) -> Rules15mConfig:
+    rules_path = Path(path or os.getenv("RULES_15M_PATH", "config/rules_15m.yaml"))
+    if rules_path.exists():
+        raw = yaml.safe_load(rules_path.read_text()) or {}
+        return Rules15mConfig.model_validate(raw)
+    return Rules15mConfig()
 
 
 def kalshi_base_url(settings: Settings, config: BotConfig) -> str:

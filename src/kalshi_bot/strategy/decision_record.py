@@ -177,6 +177,7 @@ class MarketEvaluationRecord:
 def pick_primary_rejection(codes: list[RejectionCode]) -> RejectionCode:
     """Select the most informative primary rejection from a list."""
     priority = [
+        RejectionCode.RULES_NOT_CONFIGURED,
         RejectionCode.KILL_SWITCH,
         RejectionCode.RISK_LIMIT,
         RejectionCode.COOLDOWN,

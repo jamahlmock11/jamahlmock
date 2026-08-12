@@ -24,7 +24,7 @@ from typing import Any, Sequence
 import numpy as np
 from scipy.stats import norm
 
-from kalshi_bot.config import ArbitraryPolicyConfig, V6Config
+from kalshi_bot.config import ArbitraryPolicyConfig, Rules15mConfig, V6Config, load_rules_15m
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.strategy.fees import quadratic_fee_per_contract
 from kalshi_bot.strategy.rejection_codes import RejectionCode
@@ -681,10 +681,17 @@ class V6Decision:
 class V6IntelligenceEngine:
     """Kalshi BTC 15-Min Intelligence V6 orchestrator."""
 
-    def __init__(self, config: V6Config, client: KalshiClient | None = None, *, arbitrary_cfg: ArbitraryPolicyConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: V6Config,
+        client: KalshiClient | None = None,
+        *,
+        rules: Rules15mConfig | None = None,
+    ) -> None:
         self.config = config
+        self.rules = rules or load_rules_15m()
         self.client = client
-        self.arbitrary_cfg = arbitrary_cfg or ArbitraryPolicyConfig()
+        self.arbitrary_cfg = self.rules.arbitrary
         self.calibrator = ProbabilityCalibrator(config.min_trades_per_bucket)
         self.chase_guard = EdgeChaseGuard(ttl_seconds=self.arbitrary_cfg.chase_ttl_seconds)
         self.journal = TradeJournal(config.journal_path)

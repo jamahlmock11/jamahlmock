@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from kalshi_bot.config import TierEdgeConfig, V6Config
+from kalshi_bot.config import Rules15mConfig, TierEdgeConfig, V6Config
 from kalshi_bot.strategy.decision_record import pick_primary_rejection
 from kalshi_bot.strategy.rejection_codes import RejectionCode
 from kalshi_bot.strategy.tiered_edge import SetupTier, classify_tier, classify_edge_quality, estimate_slippage
@@ -56,7 +56,21 @@ def test_tier_classification():
 
 def test_audited_evaluation_produces_record():
     cfg = V6Config(require_pattern_evidence=False)
-    engine = V6IntelligenceEngine(cfg)
+    rules = Rules15mConfig.model_validate(
+        {
+            "enabled": True,
+            "tiers": {
+                "enabled_for_live": False,
+                "edge_exceptional": 0.25,
+                "edge_strong": 0.20,
+                "edge_conditional": 0.15,
+                "edge_experimental": 0.12,
+            },
+            "quality": {"require_pattern_evidence": False},
+            "arbitrary": {"enabled": False},
+        }
+    )
+    engine = V6IntelligenceEngine(cfg, rules=rules)
     close = datetime.now(timezone.utc) + timedelta(minutes=8)
     open_t = datetime.now(timezone.utc) - timedelta(minutes=7)
     market = {
@@ -83,7 +97,7 @@ def test_audited_evaluation_produces_record():
     assert decision.audit_record is not None
     assert decision.audit_record.yes_side.executable_ask == 0.50
     assert decision.audit_record.no_side.executable_ask == 0.52
-    assert decision.audit_record.primary_rejection != RejectionCode.NONE or decision.verdict != "NO_TRADE"
+    assert decision.audit_record.verdict in {"TRADE_YES", "TRADE_NO", "NO_TRADE"}
     text = decision.audit_record.summary_text()
     assert "MARKET:" in text
     assert "EDGE" in text

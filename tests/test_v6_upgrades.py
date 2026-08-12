@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from kalshi_bot.config import V6Config
+from kalshi_bot.config import Rules15mConfig, TierEdgeConfig, V6Config
 from kalshi_bot.strategy.rejection_codes import RejectionCode
 from kalshi_bot.strategy.v6_upgrades import (
     V6IntelligenceEngine,
@@ -161,13 +161,53 @@ def test_manipulation_detector():
     assert not detect_manipulation(micro, pa)
 
 
-# ---------------------------------------------------------------------------
-# V6 engine integration
-# ---------------------------------------------------------------------------
+def _enabled_rules(**kwargs) -> Rules15mConfig:
+    base = {
+        "enabled": True,
+        "strict_edge": {"min_gap_dollars": 0.20},
+        "tiers": {
+            "enabled_for_live": True,
+            "edge_exceptional": 0.25,
+            "edge_strong": 0.20,
+            "edge_conditional": 0.15,
+            "edge_experimental": 0.12,
+            "conditional_min_confidence": 0.70,
+            "conditional_requires_model_agree": True,
+        },
+        "quality": {
+            "max_spread": 0.08,
+            "min_liquidity_score": 0.20,
+            "max_model_disagreement_pp": 50.0,
+            "require_pattern_evidence": False,
+            "min_pattern_examples": 5,
+        },
+        "arbitrary": {"enabled": False},
+    }
+    base.update(kwargs)
+    return Rules15mConfig.model_validate(base)
+
+
+def test_rules_disabled_blocks_trade():
+    cfg = V6Config()
+    engine = V6IntelligenceEngine(cfg, rules=Rules15mConfig())
+    close = datetime.now(timezone.utc) + timedelta(minutes=10)
+    market = {
+        "ticker": "KXBTC15M-TEST",
+        "strike": 65000.0,
+        "close_time": close,
+        "yes_bid": 0.33,
+        "yes_ask": 0.35,
+        "no_ask": 0.67,
+    }
+    decision = engine.evaluate(market, spot=65200.0, vol=0.55, record_diagnostics=False)
+    assert decision.verdict == "NO_TRADE"
+    assert decision.audit_record is not None
+    assert decision.audit_record.primary_rejection == RejectionCode.RULES_NOT_CONFIGURED
+
 
 def test_v6_engine_strict_edge_blocks_weak_gap():
     cfg = V6Config(strict_min_gap_dollars=0.20, require_pattern_evidence=False)
-    engine = V6IntelligenceEngine(cfg)
+    engine = V6IntelligenceEngine(cfg, rules=_enabled_rules())
     close = datetime.now(timezone.utc) + timedelta(minutes=10)
     market = {
         "ticker": "KXBTC15M-TEST",
@@ -190,7 +230,13 @@ def test_v6_engine_passes_large_gap():
         require_pattern_evidence=False,
         max_model_disagreement_pp=50.0,
     )
-    engine = V6IntelligenceEngine(cfg)
+    engine = V6IntelligenceEngine(
+        cfg,
+        rules=_enabled_rules(
+            strict_edge={"min_gap_dollars": 0.20},
+            quality={"max_model_disagreement_pp": 50.0, "require_pattern_evidence": False},
+        ),
+    )
     close = datetime.now(timezone.utc) + timedelta(minutes=10)
     market = {
         "ticker": "KXBTC15M-TEST",
