@@ -177,7 +177,11 @@ class KalshiClient:
 
     def websocket_url(self) -> str:
         if "demo" in self.base_url:
+            if "external-api" in self.base_url:
+                return "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
             return "wss://demo-api.kalshi.co/trade-api/ws/v2"
+        if "external-api" in self.base_url:
+            return "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
         return "wss://api.elections.kalshi.com/trade-api/ws/v2"
 
     def get_balance(self) -> dict:

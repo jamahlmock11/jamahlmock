@@ -135,7 +135,10 @@ class ProductionPlatform:
         now = time.time()
         api_ok = self.client.authenticated
         ws = self.trade_tape.feed_status()
-        self.safety.update_connectivity(api_ok=api_ok, market_data_ok=ws.get("connected", False))
+        ws_ok = bool(ws.get("connected", False))
+        # WebSocket preferred for tape/orderbook; REST fallback is enough to trade.
+        market_data_ok = ws_ok or api_ok
+        self.safety.update_connectivity(api_ok=api_ok, market_data_ok=market_data_ok)
 
         balance_usd = None
         if api_ok:
@@ -347,7 +350,7 @@ class ProductionPlatform:
             "kalshi_ws_last_message_age": ws.get("last_message_age_s"),
             "brti_official": True,
             "brti_source": "platform",
-            "live_trading_enabled": self.safety.trading_enabled and self.safety.live_mode,
+            "live_trading_enabled": result.status.get("status_label") == "LIVE",
             "platform_trading_enabled": self.config.platform.trading_enabled,
         }
 

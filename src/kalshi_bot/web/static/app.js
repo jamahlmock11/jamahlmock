@@ -24,19 +24,25 @@ function signalClass(decision) {
 
 function renderLiveBanner(safety, freshness) {
   const el = document.getElementById("live-banner");
-  const live =
-    safety?.status_label === "LIVE" ||
-    freshness?.live_trading_enabled ||
-    freshness?.status_label === "LIVE";
-  el.textContent = live ? "LIVE TRADING" : "DISABLED";
-  el.className = `live-banner ${live ? "live" : "disabled"}`;
+  const label = safety?.status_label || freshness?.status_label || "DISABLED";
+  if (label === "LIVE") {
+    el.textContent = "LIVE TRADING";
+    el.className = "live-banner live";
+  } else if (label === "BLOCKED") {
+    const reason = safety?.block_reason || freshness?.block_reason || "safety gate";
+    el.textContent = `BLOCKED — ${reason}`;
+    el.className = "live-banner blocked";
+  } else {
+    el.textContent = "DISABLED";
+    el.className = "live-banner disabled";
+  }
 }
 
 function updateBannerFromHealth(health) {
   if (!health) return;
   renderLiveBanner(
-    { status_label: health.status_label },
-    { live_trading_enabled: health.live_trading_enabled }
+    { status_label: health.status_label, block_reason: health.block_reason },
+    { status_label: health.status_label, block_reason: health.block_reason }
   );
 }
 

@@ -28,10 +28,17 @@ class PlatformStatus:
     candidate_model_version: str | None
 
     def to_dict(self) -> dict[str, Any]:
+        configured_live = self.trading_enabled and self.live_mode
+        if not configured_live:
+            status_label = "DISABLED"
+        elif self.block_reason:
+            status_label = "BLOCKED"
+        else:
+            status_label = "LIVE"
         return {
             "trading_enabled": self.trading_enabled,
             "live_mode": self.live_mode,
-            "status_label": "LIVE" if self.trading_enabled and self.live_mode else "DISABLED",
+            "status_label": status_label,
             "balance_usd": self.balance_usd,
             "available_balance_usd": self.available_balance_usd,
             "open_exposure_usd": self.open_exposure_usd,

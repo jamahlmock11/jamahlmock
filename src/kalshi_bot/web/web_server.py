@@ -220,16 +220,15 @@ async def health():
     snap = GLOBAL_SCAN_STATE.get()
     safety = snap.safety if snap else {}
     freshness = snap.freshness if snap else {}
-    live = bool(
-        safety.get("status_label") == "LIVE"
-        or freshness.get("live_trading_enabled")
-    )
+    status_label = safety.get("status_label") or "DISABLED"
+    live = status_label == "LIVE"
     return {
         "status": "ok",
         "has_data": snap is not None,
         "markets_scanned": snap.markets_scanned if snap else 0,
         "live_trading_enabled": live,
-        "status_label": safety.get("status_label") or ("LIVE" if live else "DISABLED"),
+        "status_label": status_label,
+        "block_reason": safety.get("block_reason"),
         "balance_usd": snap.balance_usd if snap else None,
     }
 
