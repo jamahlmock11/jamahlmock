@@ -10,8 +10,8 @@
   "terminals": [
     {
       "name": "web-dashboard",
-      "command": "python3 run.py --web --port 8080",
-      "description": "KXBTC15M mispricing web dashboard with background scan loop"
+      "command": "python3 platform_run.py --web --port 8080 --execute",
+      "description": "Production platform dashboard (KXBTC15M + KXBTCD) with live execution"
     }
   ]
 }

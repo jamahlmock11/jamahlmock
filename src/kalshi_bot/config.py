@@ -218,6 +218,7 @@ class ExecutionConfig(BaseModel):
     use_taker: bool = True
     price_improve_ticks: int = 0
     dry_run: bool = True
+    self_trade_prevention_type: Literal["taker_at_cross", "maker"] = "taker_at_cross"
 
 
 class ExitConfig(BaseModel):

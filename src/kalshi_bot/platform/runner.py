@@ -147,7 +147,10 @@ class ProductionPlatform:
                 logger.warning("balance fetch failed: %s", exc)
                 self.safety.update_connectivity(api_ok=False, market_data_ok=ws.get("connected", False))
 
-        self.position_monitor.manage_open_positions(smile=None)
+        try:
+            self.position_monitor.manage_open_positions(smile=None)
+        except Exception:
+            logger.exception("position monitor failed")
 
         decisions_15m: list[MarketDecision] = []
         decisions_1h: list[MarketDecision] = []

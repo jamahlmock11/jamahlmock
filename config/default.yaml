@@ -1,6 +1,6 @@
 # Production platform — live data, execution gated by platform.trading_enabled
 platform:
-  trading_enabled: false
+  trading_enabled: true
   model_version: production-v1
   candidate_model_version: null
   daily_loss_limit_usd: 50.0
@@ -72,7 +72,7 @@ bot_action:
 v6:
   enabled: true
   series_ticker: KXBTC15M
-  live_trading_enabled: false
+  live_trading_enabled: true
   min_trades_per_bucket: 3
   monte_carlo_sims: 5000
   journal_path: data/v6_trade_journal.db
