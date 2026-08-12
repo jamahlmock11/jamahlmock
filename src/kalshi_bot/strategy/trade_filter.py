@@ -83,30 +83,53 @@ def filter_trade(
             RejectionCode.LOW_CONFIDENCE,
         )
 
-    best = opp.best_mispricing()
-    if best is None or best.executable_ask is None:
-        return _no(TradeAction.NO_TRADE, "no executable ask", RejectionCode.MISSING_DATA)
+    def _side_qualifies(side_eval) -> bool:
+        if side_eval.executable_ask is None:
+            return False
+        if side_eval.net_edge_dollars < policy.min_net_edge_dollars:
+            return False
+        if side_eval.raw_edge_dollars < policy.min_raw_edge_dollars:
+            return False
+        if side_eval.expected_value <= 0:
+            return False
+        return True
 
-    if best.net_edge_dollars < policy.min_net_edge_dollars:
-        if policy.allow_wait and best.net_edge_dollars > 0:
+    # Evaluate YES and NO independently — take NO if YES lacks edge but NO qualifies.
+    qualifying: list = []
+    for side_eval in (opp.yes, opp.no):
+        if _side_qualifies(side_eval):
+            qualifying.append(side_eval)
+
+    if qualifying:
+        best = max(qualifying, key=lambda s: s.net_edge_dollars)
+    else:
+        best = opp.best_mispricing()
+        if best is None or best.executable_ask is None:
+            return _no(TradeAction.NO_TRADE, "no executable ask", RejectionCode.MISSING_DATA)
+
+        if best.net_edge_dollars < policy.min_net_edge_dollars:
+            yes_net = opp.yes.net_edge_dollars
+            no_net = opp.no.net_edge_dollars
+            side_detail = f"YES {yes_net*100:.1f}¢ / NO {no_net*100:.1f}¢"
+            if policy.allow_wait and best.net_edge_dollars > 0:
+                return _no(
+                    TradeAction.WAIT,
+                    f"net edge {best.net_edge_dollars*100:.1f}¢ < {policy.min_net_edge_dollars*100:.0f}¢ ({policy.label}); {side_detail}",
+                    RejectionCode.EDGE_TOO_SMALL,
+                )
             return _no(
-                TradeAction.WAIT,
-                f"net edge {best.net_edge_dollars*100:.1f}¢ < {policy.min_net_edge_dollars*100:.0f}¢ ({policy.label})",
+                TradeAction.NO_TRADE,
+                f"NO TRADE — INSUFFICIENT EDGE ({side_detail}; need {policy.min_net_edge_dollars*100:.0f}¢ net)",
                 RejectionCode.EDGE_TOO_SMALL,
             )
-        return _no(
-            TradeAction.NO_TRADE,
-            f"NO TRADE — INSUFFICIENT EDGE ({best.net_edge_dollars*100:.1f}¢ net, need {policy.min_net_edge_dollars*100:.0f}¢)",
-            RejectionCode.EDGE_TOO_SMALL,
-        )
-    if best.raw_edge_dollars < policy.min_raw_edge_dollars:
-        return _no(
-            TradeAction.NO_TRADE,
-            f"raw edge {best.raw_edge_dollars*100:.1f}¢ below {policy.label} floor",
-            RejectionCode.EDGE_TOO_SMALL,
-        )
-    if best.expected_value <= 0:
-        return _no(TradeAction.NO_TRADE, "expected value ≤ 0 after costs", RejectionCode.EXPECTED_VALUE_NEGATIVE)
+        if best.raw_edge_dollars < policy.min_raw_edge_dollars:
+            return _no(
+                TradeAction.NO_TRADE,
+                f"raw edge {best.raw_edge_dollars*100:.1f}¢ below {policy.label} floor",
+                RejectionCode.EDGE_TOO_SMALL,
+            )
+        if best.expected_value <= 0:
+            return _no(TradeAction.NO_TRADE, "expected value ≤ 0 after costs", RejectionCode.EXPECTED_VALUE_NEGATIVE)
 
     action = TradeAction.BUY_YES if best.side == "YES" else TradeAction.BUY_NO
     contracts = max(0, int(kelly_contracts * policy.size_multiplier))

@@ -8,7 +8,7 @@ from kalshi_bot.config import Rules15mConfig, TierEdgeConfig, V6Config
 from kalshi_bot.strategy.decision_record import pick_primary_rejection
 from kalshi_bot.strategy.rejection_codes import RejectionCode
 from kalshi_bot.strategy.tiered_edge import SetupTier, classify_tier, classify_edge_quality, estimate_slippage
-from kalshi_bot.strategy.v6_evaluator import _evaluate_side
+from kalshi_bot.strategy.side_evaluation import evaluate_side as _evaluate_side
 from kalshi_bot.strategy.v6_upgrades import V6IntelligenceEngine
 
 

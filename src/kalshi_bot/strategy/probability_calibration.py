@@ -35,3 +35,24 @@ class ProbabilityCalibrator:
         empirical = sum(outcomes) / len(outcomes)
         offset = empirical - prob
         return max(0.01, min(0.99, prob + offset)), True
+
+    def buckets(self) -> list[CalibrationBucket]:
+        out: list[CalibrationBucket] = []
+        for key in sorted(self._buckets):
+            outcomes = self._buckets[key]
+            if not outcomes:
+                continue
+            lo = key / 10.0
+            hi = (key + 1) / 10.0
+            empirical = sum(outcomes) / len(outcomes)
+            mid = (lo + hi) / 2
+            out.append(
+                CalibrationBucket(
+                    bucket_lo=lo,
+                    bucket_hi=hi,
+                    n_trades=len(outcomes),
+                    empirical_win_rate=empirical,
+                    calibrated_offset=empirical - mid,
+                )
+            )
+        return out

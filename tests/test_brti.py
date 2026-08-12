@@ -28,8 +28,8 @@ def test_parse_brti_payload_public_summary():
 
 def test_resolve_spot_prefers_public_cf_benchmarks():
     client = MagicMock()
-    client.authenticated = False
-    client.get_brti.return_value = None
+    client.authenticated = True
+    client.get_brti.return_value = 64000.0
     quote = BrtiQuote(value=65041.59, source="cfbenchmarks_public_rti", is_official=True)
 
     with patch("kalshi_bot.data.brti.fetch_brti_public_summary", return_value=quote):
@@ -38,6 +38,20 @@ def test_resolve_spot_prefers_public_cf_benchmarks():
     assert snap.brti == 65041.59
     assert snap.is_official is True
     assert snap.source == "cfbenchmarks_public_rti"
+    client.get_brti.assert_not_called()
+
+
+def test_resolve_spot_falls_back_to_kalshi_passthrough():
+    client = MagicMock()
+    client.authenticated = True
+    client.get_brti.return_value = 64000.0
+
+    with patch("kalshi_bot.data.brti.fetch_brti_public_summary", return_value=None):
+        snap = resolve_spot(client, brti_cfg=BrtiConfig())
+
+    assert snap.brti == 64000.0
+    assert snap.source == "cfbenchmarks_kalshi_passthrough"
+    client.get_brti.assert_called_once()
 
 
 def test_fetch_brti_public_summary_live():

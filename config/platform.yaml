@@ -1,0 +1,14 @@
+# Production Kalshi dual-strategy platform configuration
+
+platform:
+  # Explicit kill switch — must be true AND v6.live_trading_enabled for 15m orders
+  trading_enabled: false
+  model_version: production-v1
+  candidate_model_version: null
+  daily_loss_limit_usd: 50.0
+  enable_kxbtc15m: true
+  enable_kxbtcd: true
+  max_data_age_seconds: 12.0
+  enable_settlement_ingestion: false
+  enable_settlement_model: false
+  enable_vol_regime: false

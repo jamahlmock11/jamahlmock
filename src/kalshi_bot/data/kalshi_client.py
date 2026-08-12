@@ -142,6 +142,44 @@ class KalshiClient:
     def get_orderbook(self, ticker: str, depth: int = 10) -> dict:
         return self.get(f"/markets/{ticker}/orderbook", depth=depth)
 
+    def get_market(self, ticker: str) -> dict:
+        data = self.get(f"/markets/{ticker}")
+        return data.get("market") or data
+
+    def get_trades(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+        min_ts: int | None = None,
+    ) -> dict:
+        params: dict[str, Any] = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if cursor:
+            params["cursor"] = cursor
+        if min_ts is not None:
+            params["min_ts"] = min_ts
+        return self.get("/markets/trades", **params)
+
+    def iter_trades(self, *, ticker: str, limit: int = 100, max_pages: int = 5):
+        cursor = None
+        pages = 0
+        while pages < max_pages:
+            page = self.get_trades(ticker=ticker, limit=limit, cursor=cursor)
+            for trade in page.get("trades") or []:
+                yield trade
+            cursor = page.get("cursor") or ""
+            pages += 1
+            if not cursor:
+                break
+
+    def websocket_url(self) -> str:
+        if "demo" in self.base_url:
+            return "wss://demo-api.kalshi.co/trade-api/ws/v2"
+        return "wss://api.elections.kalshi.com/trade-api/ws/v2"
+
     def get_balance(self) -> dict:
         return self.get("/portfolio/balance")
 
@@ -159,44 +197,58 @@ class KalshiClient:
         no_price_dollars: str | None = None,
         time_in_force: str = "immediate_or_cancel",
         client_order_id: str | None = None,
+        self_trade_prevention_type: str = "taker_at_cross",
+        reduce_only: bool = False,
     ) -> dict:
-        """Place an order via legacy portfolio endpoint (widely supported).
+        """Place an order — prefers Kalshi V2 events API (bid/ask + fixed-point price)."""
+        cid = client_order_id or str(uuid.uuid4())
 
-        Prefer fixed-point dollar prices when provided.
-        """
+        def _v2_book_side_and_price() -> tuple[str, str]:
+            """Map legacy yes/no + buy/sell to V2 bid/ask on the YES book."""
+            if side == "yes":
+                book_side = "bid" if action == "buy" else "ask"
+                price = yes_price_dollars
+            else:
+                # NO orders quote via complementary YES price on the single book.
+                book_side = "ask" if action == "buy" else "bid"
+                price = no_price_dollars
+                if price is not None:
+                    price = f"{1.0 - float(price):.4f}"
+            if price is None:
+                raise ValueError(f"missing price for {action} {side}")
+            return book_side, price
+
+        try:
+            book_side, price = _v2_book_side_and_price()
+            v2 = {
+                "ticker": ticker,
+                "client_order_id": cid,
+                "side": book_side,
+                "count": f"{count:.2f}",
+                "price": price,
+                "time_in_force": time_in_force,
+                "self_trade_prevention_type": self_trade_prevention_type,
+                "reduce_only": reduce_only,
+                "post_only": False,
+                "cancel_order_on_pause": True,
+            }
+            return self.request("POST", "/portfolio/events/orders", json_body=v2)
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("V2 order failed (%s), trying legacy /portfolio/orders", exc)
+
         body: dict[str, Any] = {
             "ticker": ticker,
             "side": side,
             "action": action,
             "count": count,
             "type": "limit",
-            "client_order_id": client_order_id or str(uuid.uuid4()),
+            "client_order_id": cid,
         }
-        # Convert dollar string "0.42" -> cents int for legacy endpoint.
         if yes_price_dollars is not None:
             body["yes_price"] = int(round(float(yes_price_dollars) * 100))
         if no_price_dollars is not None:
             body["no_price"] = int(round(float(no_price_dollars) * 100))
-        # time_in_force mapping for legacy: IOC via expiration_ts near-now is awkward;
-        # many stacks use post-only false and rely on fill. Keep field if accepted.
-        try:
-            return self.request("POST", "/portfolio/orders", json_body=body)
-        except RuntimeError:
-            # Fallback to V2 events orders shape
-            v2 = {
-                "ticker": ticker,
-                "side": "yes" if side == "yes" else "no",
-                "action": action,
-                "count": f"{count:.2f}",
-                "type": "limit",
-                "client_order_id": body["client_order_id"],
-                "time_in_force": time_in_force,
-            }
-            if yes_price_dollars is not None and side == "yes":
-                v2["yes_price_dollars"] = yes_price_dollars
-            if no_price_dollars is not None and side == "no":
-                v2["no_price_dollars"] = no_price_dollars
-            return self.request("POST", "/portfolio/events/orders", json_body=v2)
+        return self.request("POST", "/portfolio/orders", json_body=body)
 
     def get_brti(self, index_id: str = "BRTI") -> float | None:
         """Fetch CF Benchmarks BRTI via Kalshi authenticated passthrough."""

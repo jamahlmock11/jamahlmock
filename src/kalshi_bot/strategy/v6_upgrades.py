@@ -728,7 +728,30 @@ class V6IntelligenceEngine:
         btc_snapshot: Any | None = None,
     ) -> V6Decision:
         """Evaluate market; returns V6Decision backed by full audit record."""
-        if self.rules.enabled and self.rules.mode == "mispricing":
+        now = now or datetime.now(timezone.utc)
+        ticker = str(market.get("ticker") or "")
+        strike = float(market.get("strike") or spot)
+        close = market.get("close_time")
+        secs = max((close - now).total_seconds(), 0) if close else 0.0
+        mins = secs / 60.0
+
+        if not self.rules.enabled or self.rules.mode != "mispricing":
+            from kalshi_bot.strategy.decision_record import FilterCheck
+            from kalshi_bot.strategy.rules_guard import rules_not_configured_record
+
+            filter_checks: list[FilterCheck] = []
+            audit = rules_not_configured_record(
+                ticker=ticker,
+                series=str(market.get("series_ticker") or self.config.series_ticker),
+                now=now,
+                secs=secs,
+                mins=mins,
+                spot=spot,
+                spot_source=spot_source,
+                strike=strike,
+                filter_checks=filter_checks,
+            )
+        else:
             from kalshi_bot.data.btc_data_engine import BtcDataEngine
             from kalshi_bot.strategy.mispricing_evaluator import evaluate_market_mispricing
 
@@ -747,19 +770,6 @@ class V6IntelligenceEngine:
                 spot_is_official=spot_is_official,
                 vol=vol,
                 btc=btc,
-                options_prob=options_prob,
-                now=now,
-            )
-        else:
-            from kalshi_bot.strategy.v6_evaluator import evaluate_market_audited
-
-            audit = evaluate_market_audited(
-                self,
-                market,
-                spot=spot,
-                spot_source=spot_source,
-                spot_is_official=spot_is_official,
-                vol=vol,
                 options_prob=options_prob,
                 now=now,
             )
@@ -803,194 +813,6 @@ class V6IntelligenceEngine:
             audit_record=audit,
         )
 
-    def evaluate_legacy(
-        self,
-        market: dict,
-        *,
-        spot: float,
-        vol: float,
-        options_prob: float | None = None,
-        now: datetime | None = None,
-    ) -> V6Decision:
-        """Legacy evaluate path (pre-audit). Prefer evaluate()."""
-        now = now or datetime.now(timezone.utc)
-        self.update_spot(spot)
-        ticker = str(market.get("ticker") or "")
-        strike = float(market.get("strike") or spot)
-        close = market.get("close_time")
-        yes_bid = market.get("yes_bid")
-        yes_ask = market.get("yes_ask")
-        no_ask = market.get("no_ask")
-        if no_ask is None and yes_bid is not None:
-            no_ask = max(0.0, 1.0 - yes_bid)
-
-        secs = max((close - now).total_seconds(), 0) if close else 0
-        orderbook = None
-        if self.client and ticker:
-            try:
-                orderbook = self.client.get_orderbook(ticker, depth=10)
-            except Exception:
-                pass
-
-        micro = compute_microstructure(
-            yes_bid=yes_bid,
-            yes_ask=yes_ask,
-            orderbook=orderbook,
-            prev_spread=self._prev_spread,
-            prev_depth=self._prev_depth,
-        )
-        self._prev_spread = micro.spread
-        self._prev_depth = (micro.depth_bid_10, micro.depth_ask_10)
-
-        pa = compute_price_action(list(self._price_history))
-        time_feat = compute_time_features(close, now=now) if close else None
-        regime = detect_regime(pa, micro)
-        manip = detect_manipulation(micro, pa)
-
-        ensemble = multi_model_ensemble(
-            spot=spot,
-            strike=strike,
-            vol=vol,
-            seconds_to_expiry=secs,
-            market_yes=yes_ask or 0.5,
-            micro=micro,
-            price_action=pa,
-            options_prob=options_prob,
-            max_disagreement_pp=self.config.max_model_disagreement_pp,
-        )
-
-        mc_mean, _, _ = monte_carlo_binary(
-            spot=spot,
-            strike=strike,
-            vol=vol,
-            seconds=secs,
-            n_sims=self.config.monte_carlo_sims,
-        )
-
-        gravity = strike_gravity_bias(spot, strike, secs, pa.momentum_1m)
-        inst_flow = institutional_flow_score(micro)
-        raw_prob = (
-            ensemble.consensus_prob * self.weights.weights["ensemble"]
-            + mc_mean * self.weights.weights["monte_carlo"]
-            + (options_prob or ensemble.consensus_prob) * 0.1
-            + gravity
-            + inst_flow * 0.03
-        )
-        raw_prob = max(0.01, min(0.99, raw_prob))
-        model_prob, calibrated = self.calibrator.calibrate(raw_prob)
-
-        quality = assess_market_quality(
-            micro=micro,
-            price_action=pa,
-            ensemble=ensemble,
-            spread_limit=self.config.max_spread,
-            min_liquidity=self.config.min_liquidity_score,
-            manipulation_flag=manip,
-        )
-
-        feat_dict = {
-            "bid_ask_imbalance": micro.bid_ask_imbalance,
-            "momentum_1m": pa.momentum_1m,
-            "liquidity_score": micro.liquidity_score,
-            "regime": regime.value,
-        }
-        pattern_n, pattern_wr = self.journal.similar_setups(
-            feat_dict, min_examples=self.config.min_pattern_examples
-        )
-
-        reasons: list[str] = []
-        blockers: list[str] = []
-        verdict = "NO_TRADE"
-        side_price: float | None = None
-        strict_gap = 0.0
-
-        allow, risk_reason = self.risk.allow_trade(ensemble.agreement_score)
-        if not allow:
-            blockers.append(risk_reason)
-        if not quality.tradeable:
-            blockers.append(f"do_not_trade_score={quality.do_not_trade_score:.2f}")
-            blockers.extend(quality.reasons)
-        if not ensemble.models_agree:
-            blockers.append("multi_model_disagreement")
-        if pattern_n < self.config.min_pattern_examples and self.config.require_pattern_evidence:
-            blockers.append(f"insufficient_pattern_evidence ({pattern_n}<{self.config.min_pattern_examples})")
-
-        min_gap = self.config.strict_min_gap_dollars
-
-        if yes_ask is not None and 0 < yes_ask < 1:
-            ok, gap = passes_strict_edge(model_prob, yes_ask, min_gap_dollars=min_gap)
-            strict_gap = gap
-            if ok and not blockers:
-                fee = quadratic_fee_per_contract(yes_ask)
-                if model_prob - yes_ask - fee > 0:
-                    verdict = "TRADE_YES"
-                    side_price = yes_ask
-                    reasons.append(
-                        f"STRICT EDGE: model={model_prob*100:.0f}% market={yes_ask*100:.0f}¢ "
-                        f"gap={gap*100:.0f}¢ (min {min_gap*100:.0f}¢)"
-                    )
-            elif not ok:
-                blockers.append(
-                    f"strict_edge_fail: gap={gap*100:.0f}¢ < min {min_gap*100:.0f}¢ "
-                    f"(model={model_prob*100:.0f}% vs ask={yes_ask*100:.0f}¢)"
-                )
-
-        if verdict == "NO_TRADE" and no_ask is not None and 0 < no_ask < 1:
-            q = 1.0 - model_prob
-            ok, gap = passes_strict_edge(q, no_ask, min_gap_dollars=min_gap)
-            if ok and not blockers:
-                fee = quadratic_fee_per_contract(no_ask)
-                if q - no_ask - fee > 0:
-                    verdict = "TRADE_NO"
-                    side_price = no_ask
-                    strict_gap = gap
-                    reasons.append(
-                        f"STRICT EDGE NO: model={q*100:.0f}% market={no_ask*100:.0f}¢ gap={gap*100:.0f}¢"
-                    )
-            elif not ok and "strict_edge_fail" not in " ".join(blockers):
-                blockers.append(
-                    f"strict_edge_fail NO: gap={gap*100:.0f}¢ < min {min_gap*100:.0f}¢"
-                )
-
-        explain = explainability_score(
-            ensemble=ensemble,
-            quality=quality,
-            pattern_support=pattern_n,
-            strict_edge_gap=strict_gap,
-        )
-
-        contracts = 0
-        if verdict != "NO_TRADE" and side_price:
-            contracts = self.risk.kelly_size(
-                prob=model_prob if verdict == "TRADE_YES" else 1.0 - model_prob,
-                price=side_price,
-                bankroll=self.config.bankroll_usd,
-                confidence=explain,
-            )
-
-        if time_feat and time_feat.historical_win_rate is not None:
-            reasons.append(f"historical_wr@{time_feat.minutes_to_expiry:.0f}m={time_feat.historical_win_rate:.2f}")
-
-        return V6Decision(
-            verdict=verdict,
-            model_probability=model_prob,
-            market_price=side_price,
-            strict_gap_dollars=strict_gap,
-            confidence=ensemble.agreement_score,
-            explainability=explain,
-            regime=regime,
-            monte_carlo_prob=mc_mean,
-            calibrated=calibrated,
-            pattern_examples=pattern_n,
-            pattern_win_rate=pattern_wr,
-            quality=quality,
-            ensemble=ensemble,
-            micro=micro,
-            reasons=tuple(reasons),
-            blockers=tuple(dict.fromkeys(blockers)),
-            contracts=contracts,
-        )
-
     def record_trade(
         self,
         decision: V6Decision,
@@ -1000,21 +822,20 @@ class V6IntelligenceEngine:
         won: bool | None,
         pnl: float,
     ) -> None:
-        self.journal.save(
-            TradeRecord(
-                ticker=ticker,
-                side=side,
-                features={
-                    "bid_ask_imbalance": decision.micro.bid_ask_imbalance,
-                    "momentum_1m": 0.0,
-                    "liquidity_score": decision.micro.liquidity_score,
-                },
-                prediction=decision.model_probability,
-                confidence=decision.confidence,
-                outcome=won,
-                pnl=pnl,
-                reason="; ".join(decision.reasons),
-            )
+        features = {
+            "bid_ask_imbalance": decision.micro.bid_ask_imbalance if decision.micro else 0.0,
+            "momentum_1m": 0.0,
+            "liquidity_score": decision.micro.liquidity_score if decision.micro else 0.0,
+        }
+        self._save_trade_record(
+            ticker=ticker,
+            side=side,
+            features=features,
+            prediction=decision.model_probability,
+            confidence=decision.confidence,
+            outcome=won,
+            pnl=pnl,
+            reason="; ".join(decision.reasons),
         )
         if won is not None:
             self.calibrator.record(decision.model_probability, won)
@@ -1023,3 +844,53 @@ class V6IntelligenceEngine:
                 {"ensemble": decision.confidence, "monte_carlo": decision.monte_carlo_prob},
                 won=won,
             )
+
+    def record_settlement(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        prediction: float,
+        confidence: float,
+        features: dict,
+        won: bool,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        self._save_trade_record(
+            ticker=ticker,
+            side=side,
+            features=features,
+            prediction=prediction,
+            confidence=confidence,
+            outcome=won,
+            pnl=pnl,
+            reason=f"settlement: {reason}",
+        )
+        self.calibrator.record(prediction if side.lower() == "yes" else 1.0 - prediction, won)
+        self.risk.record_outcome(pnl)
+
+    def _save_trade_record(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        features: dict,
+        prediction: float,
+        confidence: float,
+        outcome: bool | None,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        self.journal.save(
+            TradeRecord(
+                ticker=ticker,
+                side=side,
+                features=features,
+                prediction=prediction,
+                confidence=confidence,
+                outcome=outcome,
+                pnl=pnl,
+                reason=reason,
+            )
+        )

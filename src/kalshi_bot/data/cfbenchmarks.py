@@ -1,9 +1,11 @@
 """CF Benchmarks BRTI access (official Kalshi settlement index).
 
-Sources (in priority order when configured):
+Primary source: public index page https://www.cfbenchmarks.com/data/indices/BRTI
+
+Fallbacks (in order):
 1. Kalshi authenticated /cfbenchmarks passthrough
 2. Direct CF Benchmarks REST API (licensed credentials)
-3. Public CF Benchmarks index page summary (official displayed RTI)
+3. Exchange BTC proxies (scanning only)
 """
 
 from __future__ import annotations

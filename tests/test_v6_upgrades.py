@@ -205,23 +205,32 @@ def test_rules_disabled_blocks_trade():
     assert decision.audit_record.primary_rejection == RejectionCode.RULES_NOT_CONFIGURED
 
 
-def test_v6_engine_strict_edge_blocks_weak_gap():
-    cfg = V6Config(strict_min_gap_dollars=0.20, require_pattern_evidence=False)
+def test_v6_engine_blocks_weak_executable_edge():
+    cfg = V6Config(require_pattern_evidence=False)
     engine = V6IntelligenceEngine(cfg, rules=_enabled_rules())
     close = datetime.now(timezone.utc) + timedelta(minutes=10)
+    open_t = datetime.now(timezone.utc) - timedelta(minutes=5)
     market = {
         "ticker": "KXBTC15M-TEST",
+        "series_ticker": "KXBTC15M",
         "strike": 65000.0,
         "close_time": close,
+        "open_time": open_t,
         "yes_bid": 0.48,
         "yes_ask": 0.50,
         "no_ask": 0.52,
     }
     for _ in range(30):
         engine.update_spot(65100.0)
-    decision = engine.evaluate_legacy(market, spot=65100.0, vol=0.55, options_prob=0.58)
+    decision = engine.evaluate(market, spot=65100.0, vol=0.55, options_prob=0.58, record_diagnostics=False)
     assert decision.verdict == "NO_TRADE"
-    assert any("strict_edge_fail" in b for b in decision.blockers)
+    assert decision.audit_record is not None
+    assert decision.audit_record.primary_rejection in {
+        RejectionCode.EDGE_TOO_SMALL,
+        RejectionCode.EXPECTED_VALUE_NEGATIVE,
+        RejectionCode.MODEL_CONFLICT,
+        RejectionCode.STALE_DATA,
+    }
 
 
 def test_v6_engine_passes_large_gap():

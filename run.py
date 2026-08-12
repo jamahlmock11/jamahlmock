@@ -9,6 +9,7 @@ Usage:
   python run.py --loop           # continuous loop
   python run.py --loop -n 30     # 30 iterations
   python run.py --execute        # live execution (requires prod keys + execution.mode: live)
+  python run.py --web            # web dashboard + background scan loop
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from rich.table import Table
 from kalshi_bot.config import BotConfig, Settings, V6Config, kalshi_base_url, load_config, load_rules_15m
 from kalshi_bot.data.btc_data_engine import BtcDataEngine, BtcMarketSnapshot
 from kalshi_bot.data.brti import resolve_spot
+from kalshi_bot.data.kalshi_trade_tape import KalshiTradeTapeService
+from kalshi_bot.learning.settlement_ingestion import SettlementIngestor
 from kalshi_bot.data.ibit_options import load_ibit_smile
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
 from kalshi_bot.data.realized_vol import estimate_realized_vol
@@ -48,6 +51,7 @@ from kalshi_bot.strategy.trade_filter import TradeDecision
 from kalshi_bot.strategy.mispricing import Mispricing, Side
 from kalshi_bot.strategy.v6_upgrades import Regime, V6Decision, V6IntelligenceEngine
 from kalshi_bot.utils.logging import setup_logging
+from kalshi_bot.web.scan_state import GLOBAL_SCAN_STATE, ScanSnapshot
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -103,15 +107,23 @@ class V6Scanner:
         config: BotConfig,
         engine: V6IntelligenceEngine,
         btc_engine: BtcDataEngine,
+        *,
+        trade_tape: KalshiTradeTapeService | None = None,
+        settlement: SettlementIngestor | None = None,
     ) -> None:
         self.client = client
         self.config = config
         self.engine = engine
         self.v6 = config.v6
         self.btc_engine = btc_engine
+        self.trade_tape = trade_tape
+        self.settlement = settlement
         self.rules = engine.rules
 
     def scan(self, smile: VolSmile | None = None) -> V6ScanResult:
+        import time as time_mod
+
+        scan_t0 = time_mod.time()
         now = datetime.now(timezone.utc)
         fallback = smile.spot_btc if smile else None
         spot_snap = resolve_spot(self.client, fallback_btc=fallback, brti_cfg=self.config.brti)
@@ -144,6 +156,7 @@ class V6Scanner:
         scanned = 0
         blocker_counts: Counter[str] = Counter()
         use_mispricing = self.rules.enabled and self.rules.mode == "mispricing"
+        open_tickers: list[str] = []
 
         for raw in self.client.iter_markets(self.v6.series_ticker, status="open"):
             market = normalize_market(raw)
@@ -157,6 +170,7 @@ class V6Scanner:
                 continue
             scanned += 1
             ticker = str(market.get("ticker") or "")
+            open_tickers.append(ticker)
 
             options_prob = None
             strike = market.get("strike")
@@ -175,6 +189,29 @@ class V6Scanner:
                     pass
 
             if use_mispricing:
+                recent_trades = None
+                tape_stats = None
+                orderbook = None
+                orderbook_source = "rest"
+                kalshi_stale = False
+                if self.trade_tape is not None:
+                    self.trade_tape.ensure_subscription([ticker])
+                    recent_trades = self.trade_tape.recent_trades(ticker)
+                    tape_stats = self.trade_tape.tape_stats(ticker)
+                    ob_quote = self.trade_tape.orderbook_quote(ticker)
+                    if ob_quote is not None:
+                        market = dict(market)
+                        if ob_quote.yes_bid is not None:
+                            market["yes_bid"] = ob_quote.yes_bid
+                        if ob_quote.yes_ask is not None:
+                            market["yes_ask"] = ob_quote.yes_ask
+                        if ob_quote.no_ask is not None:
+                            market["no_ask"] = ob_quote.no_ask
+                        orderbook = self.trade_tape.orderbook_dict(ticker)
+                        orderbook_source = "ws"
+                        kalshi_stale = ob_quote.stale
+                    elif tape_stats is not None:
+                        kalshi_stale = tape_stats.stale
                 audit, opp, trade_dec = evaluate_market_mispricing(
                     self.engine,
                     market,
@@ -186,6 +223,10 @@ class V6Scanner:
                     options_prob=options_prob,
                     now=now,
                     fee_rate=self.config.fee_rate,
+                    recent_trades=recent_trades,
+                    kalshi_stale=kalshi_stale,
+                    orderbook=orderbook,
+                    orderbook_source=orderbook_source,
                 )
                 self.engine.get_monitor().record(audit)
                 decision = V6Decision(
@@ -249,17 +290,11 @@ class V6Scanner:
         mispricing_rows.sort(key=lambda r: r.opportunity.best_net_edge, reverse=True)
         top_blockers = blocker_counts.most_common(8)
 
-        logger.info(
-            "%s %s scan: markets=%d trades=%d no_trade=%d spot=%.2f vol=%.1f%%",
-            WORKFLOW_NAME,
-            WORKFLOW_VERSION,
-            scanned,
-            len(trades),
-            len(no_trades),
-            spot,
-            vol * 100,
-        )
-        return V6ScanResult(
+        settlements: list[dict] = []
+        if self.settlement is not None:
+            settlements = self.settlement.ingest(self.client, self.engine)
+
+        result = V6ScanResult(
             spot=spot,
             spot_source=spot_snap.source,
             spot_official=spot_snap.is_official,
@@ -273,6 +308,189 @@ class V6Scanner:
             balance_usd=balance_usd,
             mispricing_rows=mispricing_rows,
         )
+        _publish_scan_state(
+            result,
+            trade_tape=self.trade_tape,
+            engine=self.engine,
+            settlement=self.settlement,
+            settlements=settlements,
+            spot_snap=spot_snap,
+            btc=btc,
+            scan_duration_ms=(time_mod.time() - scan_t0) * 1000,
+        )
+        logger.info(
+            "%s %s scan: markets=%d trades=%d no_trade=%d spot=%.2f vol=%.1f%%",
+            WORKFLOW_NAME,
+            WORKFLOW_VERSION,
+            scanned,
+            len(trades),
+            len(no_trades),
+            spot,
+            vol * 100,
+        )
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Scan state (web dashboard)
+# ---------------------------------------------------------------------------
+
+def _publish_scan_state(
+    result: V6ScanResult,
+    *,
+    trade_tape: KalshiTradeTapeService | None = None,
+    engine: V6IntelligenceEngine | None = None,
+    settlement: SettlementIngestor | None = None,
+    settlements: list[dict] | None = None,
+    spot_snap: Any | None = None,
+    btc: Any | None = None,
+    scan_duration_ms: float = 0.0,
+) -> None:
+    import time as time_mod
+
+    tape: dict[str, dict] = {}
+    opps: list[dict] = []
+    feed_status = trade_tape.feed_status() if trade_tape is not None else {}
+    ws_last = feed_status.get("last_message_at")
+    ws_age = round(time_mod.time() - ws_last, 1) if ws_last else None
+    for row in result.mispricing_rows:
+        ticker = row.ticker
+        tape_tps = 0.0
+        price_source = "rest"
+        ob_stale = False
+        if trade_tape is not None:
+            tstats = trade_tape.tape_stats(ticker)
+            ob_quote = trade_tape.orderbook_quote(ticker)
+            tape[ticker] = {
+                "tps": tstats.trades_per_second,
+                "buy_pressure": tstats.buy_pressure,
+                "volume_1m": tstats.volume_1m,
+                "last_price": tstats.last_price,
+                "stale": tstats.stale,
+                "source": tstats.source,
+            }
+            tape_tps = tstats.trades_per_second
+            if ob_quote is not None:
+                price_source = ob_quote.source
+                ob_stale = ob_quote.stale
+        opps.append(
+            {
+                "ticker": ticker,
+                "btc": result.spot,
+                "strike": row.opportunity.strike,
+                "seconds_to_expiry": row.opportunity.seconds_to_expiry,
+                "model_yes": row.opportunity.model_yes_pct,
+                "yes_ask": row.opportunity.yes.executable_ask,
+                "fair_value": row.opportunity.fair_value_yes,
+                "net_edge": row.opportunity.best_net_edge,
+                "confidence": row.opportunity.confidence_label,
+                "volatility": row.opportunity.volatility_label,
+                "order_flow": row.opportunity.order_flow_label,
+                "liquidity": row.opportunity.liquidity_label,
+                "tape_tps": tape_tps,
+                "price_source": price_source,
+                "kalshi_stale": ob_stale or row.opportunity.kalshi_stale,
+                "decision": row.trade.action.value,
+                "reason": row.trade.reason,
+            }
+        )
+    calibration: list[dict] = []
+    if engine is not None and settlement is not None:
+        calibration = settlement.calibration_summary(engine.calibrator)
+    freshness = {
+        "scan_duration_ms": round(scan_duration_ms, 1),
+        "brti_source": spot_snap.source if spot_snap else result.spot_source,
+        "brti_official": spot_snap.is_official if spot_snap else result.spot_official,
+        "btc_stale": btc.stale if btc is not None else False,
+        "kalshi_ws_connected": feed_status.get("connected", False),
+        "kalshi_ws_last_message_age": ws_age,
+        "kalshi_ws_error": feed_status.get("last_error"),
+        "live_trading_enabled": load_config().v6.live_trading_enabled,
+    }
+    GLOBAL_SCAN_STATE.update(
+        ScanSnapshot(
+            asof=result.asof,
+            spot=result.spot,
+            spot_source=result.spot_source,
+            balance_usd=result.balance_usd,
+            markets_scanned=result.markets_scanned,
+            opportunities=opps,
+            tape=tape,
+            settlements=settlements or [],
+            calibration=calibration,
+            freshness=freshness,
+        )
+    )
+
+
+def _record_fill_entry(
+    settlement: SettlementIngestor | None,
+    *,
+    ticker: str,
+    side: str,
+    price: float,
+    contracts: int,
+    prediction: float,
+    confidence: float,
+    seconds_to_expiry: float,
+    volatility: float,
+    net_edge: float,
+    reason: str,
+    micro_features: dict | None = None,
+) -> None:
+    if settlement is None:
+        return
+    settlement.record_entry(
+        ticker=ticker,
+        side=side,
+        entry_price=price,
+        contracts=contracts,
+        prediction=prediction,
+        confidence=confidence,
+        features=micro_features or {},
+        seconds_to_expiry=seconds_to_expiry,
+        volatility=volatility,
+        net_edge=net_edge,
+        reason=reason,
+    )
+
+
+def _record_fill_from_candidate(
+    settlement: SettlementIngestor | None,
+    candidate: V6TradeCandidate,
+    *,
+    price: float,
+    contracts: int,
+    vol_ann: float,
+) -> None:
+    if settlement is None:
+        return
+    d = candidate.decision
+    audit = d.audit_record
+    side = "yes" if d.verdict == "TRADE_YES" else "no"
+    features: dict = {}
+    if audit is not None:
+        features = {
+            "liquidity_score": audit.liquidity_score,
+            "bid_ask_imbalance": audit.bid_ask_imbalance,
+            "order_book_depth_bid": audit.order_book_depth_bid,
+            "order_book_depth_ask": audit.order_book_depth_ask,
+            "spread": audit.spread,
+        }
+    _record_fill_entry(
+        settlement,
+        ticker=candidate.ticker,
+        side=side,
+        price=price,
+        contracts=contracts,
+        prediction=d.model_probability if side == "yes" else 1.0 - d.model_probability,
+        confidence=d.confidence,
+        seconds_to_expiry=audit.seconds_to_expiry if audit else 0.0,
+        volatility=vol_ann,
+        net_edge=audit.best_net_edge if audit else d.strict_gap_dollars,
+        reason="; ".join(d.reasons) if d.reasons else d.verdict,
+        micro_features=features,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +705,17 @@ def build_v6_runtime(
     settings: Settings | None = None,
     *,
     strict_gap: float | None = None,
-) -> tuple[Settings, BotConfig, KalshiClient, V6IntelligenceEngine, V6Scanner, Executor, BtcDataEngine]:
+) -> tuple[
+    Settings,
+    BotConfig,
+    KalshiClient,
+    V6IntelligenceEngine,
+    V6Scanner,
+    Executor,
+    BtcDataEngine,
+    KalshiTradeTapeService,
+    SettlementIngestor,
+]:
     settings = settings or Settings()
     config = load_config(settings.config_path)
     rules = load_rules_15m()
@@ -504,10 +732,19 @@ def build_v6_runtime(
         logger.warning("Kalshi client not authenticated — balance/execution unavailable")
     btc_engine = BtcDataEngine()
     engine = V6IntelligenceEngine(config.v6, client=client, rules=rules, btc_engine=btc_engine)
-    scanner = V6Scanner(client, config, engine, btc_engine)
+    trade_tape = KalshiTradeTapeService(client)
+    settlement = SettlementIngestor("data/settlement_pending.db")
+    scanner = V6Scanner(
+        client,
+        config,
+        engine,
+        btc_engine,
+        trade_tape=trade_tape,
+        settlement=settlement,
+    )
     risk = RiskManager(config)
     executor = Executor(client, config, risk)
-    return settings, config, client, engine, scanner, executor, btc_engine
+    return settings, config, client, engine, scanner, executor, btc_engine, trade_tape, settlement
 
 
 # ---------------------------------------------------------------------------
@@ -522,7 +759,7 @@ def run_v6_once(
     top: int = 10,
 ) -> V6ScanResult:
     """Single V6 intelligence scan cycle."""
-    settings, config, client, engine, scanner, executor, _btc = build_v6_runtime(
+    settings, config, client, engine, scanner, executor, _btc, _tape, settlement = build_v6_runtime(
         strict_gap=strict_gap,
     )
     try:
@@ -557,13 +794,22 @@ def run_v6_once(
                     continue
                 size = c.decision.contracts or executor.risk.size(mis)
                 if size > 0:
-                    executor.execute(mis, size, ignore_cooldown=True)
+                    fill = executor.execute(mis, size, ignore_cooldown=True)
+                    if fill:
+                        _record_fill_from_candidate(
+                            settlement,
+                            c,
+                            price=fill.price,
+                            contracts=fill.contracts,
+                            vol_ann=result.vol_ann,
+                        )
                     logger.info("executed %s %s x%d", c.decision.verdict, c.ticker, size)
         elif execute and result.trades and not config.v6.live_trading_enabled:
             console.print("[yellow]Trades found but live_trading_enabled=false — paper only[/yellow]")
 
         return result
     finally:
+        _tape.close()
         client.close()
 
 
@@ -575,7 +821,7 @@ def run_v6_loop(
     strict_gap: float | None = None,
 ) -> None:
     """Continuous V6 intelligence loop."""
-    settings, config, client, engine, scanner, executor, _btc = build_v6_runtime(
+    settings, config, client, engine, scanner, executor, _btc, _tape, settlement = build_v6_runtime(
         strict_gap=strict_gap,
     )
     sleep_s = interval or config.scan_interval_seconds
@@ -612,6 +858,13 @@ def run_v6_loop(
                             else:
                                 fill = executor.execute(mis, size, ignore_cooldown=True)
                                 if fill:
+                                    _record_fill_from_candidate(
+                                        settlement,
+                                        best,
+                                        price=fill.price,
+                                        contracts=fill.contracts,
+                                        vol_ann=result.vol_ann,
+                                    )
                                     logger.info(
                                         "executed %s %s x%d mode=%s",
                                         best.decision.verdict,
@@ -629,6 +882,70 @@ def run_v6_loop(
                 logger.exception("V6 scan iteration %d failed", iterations)
             time.sleep(sleep_s)
     finally:
+        _tape.close()
+        client.close()
+
+
+def run_web(
+    *,
+    host: str = "0.0.0.0",
+    port: int = 8080,
+    interval: float | None = None,
+    execute: bool = False,
+    strict_gap: float | None = None,
+) -> None:
+    """Start web dashboard with background mispricing scan loop."""
+    import threading
+
+    from kalshi_bot.web.web_server import run_server
+
+    settings, config, client, _engine, scanner, executor, _btc, trade_tape, settlement = build_v6_runtime(
+        strict_gap=strict_gap,
+    )
+    sleep_s = interval or config.scan_interval_seconds
+    stop = threading.Event()
+
+    def scan_loop() -> None:
+        smile = None
+        while not stop.is_set():
+            try:
+                if smile is None:
+                    try:
+                        smile = load_ibit_smile(config.smile, allow_synthetic=False)
+                    except Exception:
+                        smile = None
+                result = scanner.scan(smile)
+                if execute and result.trades and config.v6.live_trading_enabled:
+                    best = result.trades[0]
+                    mis = v6_to_mispricing(best.ticker, best.decision)
+                    if mis is not None:
+                        size = best.decision.contracts or executor.risk.size(mis)
+                        if size > 0:
+                            fill = executor.execute(mis, size, ignore_cooldown=True)
+                            if fill:
+                                _record_fill_from_candidate(
+                                    settlement,
+                                    best,
+                                    price=fill.price,
+                                    contracts=fill.contracts,
+                                    vol_ann=result.vol_ann,
+                                )
+            except Exception:
+                logger.exception("web scan loop failed")
+            stop.wait(sleep_s)
+
+    worker = threading.Thread(target=scan_loop, name="web-scan", daemon=True)
+    worker.start()
+    console.print(
+        f"[green]Web dashboard at http://localhost:{port}[/green] "
+        f"(scan every {sleep_s:.0f}s)\n"
+        "[dim]Cloud Agent: open the forwarded port URL from the Ports panel, not your local localhost[/dim]"
+    )
+    try:
+        run_server(host=host, port=port, with_scan=False)
+    finally:
+        stop.set()
+        trade_tape.close()
         client.close()
 
 
@@ -640,7 +957,7 @@ def collect_diagnostics(
     allow_synthetic_smile: bool = False,
 ) -> None:
     """Paper-mode diagnostic collection until target evaluations reached."""
-    settings, config, client, engine, scanner, _executor, _btc = build_v6_runtime()
+    settings, config, client, engine, scanner, _executor, _btc, _tape, _settlement = build_v6_runtime()
     monitor = engine.get_monitor()
     collected = 0
     iterations = 0
@@ -668,6 +985,7 @@ def collect_diagnostics(
                 logger.exception("collect iteration %d failed", iterations)
             time.sleep(interval)
     finally:
+        _tape.close()
         client.close()
 
     breakdown = monitor.rejection_breakdown()
@@ -732,6 +1050,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Paper diagnostic collection: evaluate N markets",
     )
     parser.add_argument("--report", action="store_true", help="Print rejection breakdown report")
+    parser.add_argument("--web", action="store_true", help="Start web dashboard with background scan loop")
+    parser.add_argument("--host", default="0.0.0.0", help="Web server bind host (with --web)")
+    parser.add_argument("--port", type=int, default=8080, help="Web server port (with --web)")
     args = parser.parse_args(argv)
 
     if args.report:
@@ -750,7 +1071,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.execute or args.loop:
         _assert_live_only(config)
 
-    if args.loop:
+    if args.web:
+        run_web(
+            host=args.host,
+            port=args.port,
+            interval=args.interval,
+            execute=args.execute,
+            strict_gap=args.strict,
+        )
+    elif args.loop:
         run_v6_loop(
             max_iterations=args.iterations,
             interval=args.interval,

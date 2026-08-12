@@ -40,7 +40,11 @@ class ArbitraryPolicyConfig(BaseModel):
 
 
 class BrtiConfig(BaseModel):
-    """CF Benchmarks BRTI (Kalshi settlement index) resolution."""
+    """CF Benchmarks BRTI (Kalshi settlement index) resolution.
+
+    Primary source is the public CF Benchmarks index page (BRTI).
+    Kalshi passthrough, licensed API, and exchange proxies are fallbacks.
+    """
 
     index_id: str = "BRTI"
     prefer_official: bool = True
@@ -197,7 +201,7 @@ class Rules15mConfig(BaseModel):
     """Trading rules for the 15-minute bot (KXBTC15M / V6 workflow)."""
 
     enabled: bool = False
-    mode: Literal["mispricing", "legacy"] = "mispricing"
+    mode: Literal["mispricing"] = "mispricing"
     strict_edge: StrictEdgeRules = Field(default_factory=StrictEdgeRules)
     tiers: TierEdgeConfig = Field(default_factory=_cleared_tier_config)
     arbitrary: ArbitraryPolicyConfig = Field(
@@ -214,6 +218,7 @@ class ExecutionConfig(BaseModel):
     use_taker: bool = True
     price_improve_ticks: int = 0
     dry_run: bool = True
+    self_trade_prevention_type: Literal["taker_at_cross", "maker"] = "taker_at_cross"
 
 
 class ExitConfig(BaseModel):
@@ -232,6 +237,21 @@ class ExitConfig(BaseModel):
     )
 
 
+class PlatformConfig(BaseModel):
+    """Production platform controls — explicit live trading gate."""
+
+    trading_enabled: bool = False
+    model_version: str = "production-v1"
+    candidate_model_version: str | None = None
+    daily_loss_limit_usd: float = 50.0
+    enable_kxbtc15m: bool = True
+    enable_kxbtcd: bool = True
+    max_data_age_seconds: float = 12.0
+    enable_settlement_ingestion: bool = False
+    enable_settlement_model: bool = False
+    enable_vol_regime: bool = False
+
+
 class BotConfig(BaseModel):
     brti: BrtiConfig = Field(default_factory=BrtiConfig)
     arbitrary: ArbitraryPolicyConfig = Field(default_factory=ArbitraryPolicyConfig)
@@ -246,6 +266,7 @@ class BotConfig(BaseModel):
     forecast_gates: ForecastGateConfig = Field(default_factory=ForecastGateConfig)
     bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
     v6: V6Config = Field(default_factory=V6Config)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     exit: ExitConfig = Field(default_factory=ExitConfig)
     scan_interval_seconds: float = 5.0

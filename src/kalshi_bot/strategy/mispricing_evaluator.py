@@ -15,7 +15,7 @@ from kalshi_bot.strategy.decision_record import (
 )
 from kalshi_bot.strategy.mispricing_engine import MispricingOpportunity, TradeAction, evaluate_mispricing
 from kalshi_bot.strategy.rejection_codes import RejectionCode
-from kalshi_bot.strategy.settlement_probability import estimate_settlement_probability
+from kalshi_bot.strategy.settlement_probability import SettlementProbability, estimate_settlement_probability
 from kalshi_bot.strategy.time_buckets import TimeBucket, classify_time_bucket
 from kalshi_bot.strategy.trade_filter import TradeDecision, filter_trade
 from kalshi_bot.strategy.v6_upgrades import (
@@ -23,6 +23,7 @@ from kalshi_bot.strategy.v6_upgrades import (
     compute_microstructure,
     compute_price_action,
     detect_regime,
+    monte_carlo_binary,
 )
 
 
@@ -70,6 +71,11 @@ def evaluate_market_mispricing(
     options_prob: float | None = None,
     now: datetime | None = None,
     fee_rate: float = 0.07,
+    recent_trades: list[dict] | None = None,
+    kalshi_stale: bool = False,
+    orderbook: dict | None = None,
+    orderbook_source: str = "rest",
+    use_settlement_model: bool = True,
 ) -> tuple[MarketEvaluationRecord, MispricingOpportunity, TradeDecision]:
     """Full mispricing pipeline for one KXBTC15M market."""
     config: V6Config = engine.config
@@ -87,45 +93,76 @@ def evaluate_market_mispricing(
     no_ask = market.get("no_ask")
     if no_ask is None and yes_bid is not None:
         no_ask = max(0.0, 1.0 - yes_bid)
+    elif no_ask is None and yes_ask is not None:
+        no_ask = max(0.01, min(0.99, 1.0 - yes_ask))
 
     secs = max((close - now).total_seconds(), 0) if close else 0
     mins = secs / 60.0
     filter_checks: list[FilterCheck] = []
     all_rejections: list[RejectionCode] = []
 
-    orderbook = None
+    orderbook_data = orderbook
     ob_status = "MISSING"
-    if engine.client and ticker:
+    if orderbook_data is not None:
+        ob_status = orderbook_source.upper()
+    elif engine.client and ticker:
         try:
-            orderbook = engine.client.get_orderbook(ticker, depth=10)
-            ob_status = "FRESH"
+            orderbook_data = engine.client.get_orderbook(ticker, depth=10)
+            ob_status = "REST"
         except Exception:
             ob_status = "MISSING"
 
     micro = compute_microstructure(
         yes_bid=yes_bid,
         yes_ask=yes_ask,
-        orderbook=orderbook,
+        orderbook=orderbook_data,
         prev_spread=engine._prev_spread,
         prev_depth=engine._prev_depth,
+        recent_trades=recent_trades,
     )
     engine._prev_spread = micro.spread
     engine._prev_depth = (micro.depth_bid_10, micro.depth_ask_10)
     pa = compute_price_action(list(engine._price_history))
     regime = detect_regime(pa, micro)
 
-    kalshi_stale = micro.spread <= 0 and yes_ask is None
+    if kalshi_stale:
+        kalshi_stale_flag = True
+    else:
+        kalshi_stale_flag = micro.spread <= 0 and yes_ask is None
 
-    settlement = estimate_settlement_probability(
-        spot=spot,
-        strike=strike,
-        seconds_to_expiry=secs,
-        annualized_vol=vol,
-        btc=btc,
-        options_prob=options_prob,
-        calibrator=engine.calibrator,
-        monte_carlo_sims=config.monte_carlo_sims,
-    )
+    if use_settlement_model:
+        settlement = estimate_settlement_probability(
+            spot=spot,
+            strike=strike,
+            seconds_to_expiry=secs,
+            annualized_vol=vol,
+            btc=btc,
+            options_prob=options_prob,
+            calibrator=engine.calibrator,
+            monte_carlo_sims=config.monte_carlo_sims,
+        )
+    else:
+        mc_mean, _, _ = monte_carlo_binary(
+            spot=spot,
+            strike=strike,
+            vol=vol,
+            seconds=secs,
+            n_sims=config.monte_carlo_sims,
+        )
+        conf = 0.5 + 0.25 * btc.cross_exchange_agreement
+        if btc.is_official:
+            conf += 0.1
+        settlement = SettlementProbability(
+            prob_above_strike=mc_mean,
+            prob_below_strike=1.0 - mc_mean,
+            raw_prob=mc_mean,
+            calibrated=False,
+            gbm_prob=mc_mean,
+            monte_carlo_prob=mc_mean,
+            momentum_adjustment=0.0,
+            confidence=min(0.95, conf),
+            disagreement_pp=0.0,
+        )
 
     opp = evaluate_mispricing(
         ticker=ticker,
@@ -137,7 +174,7 @@ def evaluate_market_mispricing(
         micro=micro,
         order_flow_label=btc.order_flow_label,
         volatility_label=btc.volatility_label,
-        kalshi_stale=kalshi_stale,
+        kalshi_stale=kalshi_stale_flag,
         fee_rate=fee_rate,
     )
 
