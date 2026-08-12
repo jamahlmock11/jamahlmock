@@ -1000,21 +1000,20 @@ class V6IntelligenceEngine:
         won: bool | None,
         pnl: float,
     ) -> None:
-        self.journal.save(
-            TradeRecord(
-                ticker=ticker,
-                side=side,
-                features={
-                    "bid_ask_imbalance": decision.micro.bid_ask_imbalance,
-                    "momentum_1m": 0.0,
-                    "liquidity_score": decision.micro.liquidity_score,
-                },
-                prediction=decision.model_probability,
-                confidence=decision.confidence,
-                outcome=won,
-                pnl=pnl,
-                reason="; ".join(decision.reasons),
-            )
+        features = {
+            "bid_ask_imbalance": decision.micro.bid_ask_imbalance if decision.micro else 0.0,
+            "momentum_1m": 0.0,
+            "liquidity_score": decision.micro.liquidity_score if decision.micro else 0.0,
+        }
+        self._save_trade_record(
+            ticker=ticker,
+            side=side,
+            features=features,
+            prediction=decision.model_probability,
+            confidence=decision.confidence,
+            outcome=won,
+            pnl=pnl,
+            reason="; ".join(decision.reasons),
         )
         if won is not None:
             self.calibrator.record(decision.model_probability, won)
@@ -1023,3 +1022,53 @@ class V6IntelligenceEngine:
                 {"ensemble": decision.confidence, "monte_carlo": decision.monte_carlo_prob},
                 won=won,
             )
+
+    def record_settlement(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        prediction: float,
+        confidence: float,
+        features: dict,
+        won: bool,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        self._save_trade_record(
+            ticker=ticker,
+            side=side,
+            features=features,
+            prediction=prediction,
+            confidence=confidence,
+            outcome=won,
+            pnl=pnl,
+            reason=f"settlement: {reason}",
+        )
+        self.calibrator.record(prediction if side.lower() == "yes" else 1.0 - prediction, won)
+        self.risk.record_outcome(pnl)
+
+    def _save_trade_record(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        features: dict,
+        prediction: float,
+        confidence: float,
+        outcome: bool | None,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        self.journal.save(
+            TradeRecord(
+                ticker=ticker,
+                side=side,
+                features=features,
+                prediction=prediction,
+                confidence=confidence,
+                outcome=outcome,
+                pnl=pnl,
+                reason=reason,
+            )
+        )

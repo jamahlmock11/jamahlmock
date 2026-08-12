@@ -1,0 +1,57 @@
+:root {
+  --bg: #0f1419;
+  --card: #1a2332;
+  --text: #e7ecf3;
+  --muted: #8b9bb4;
+  --green: #3dd68c;
+  --red: #f07178;
+  --yellow: #ebcb8b;
+  --blue: #5eb3ff;
+  --border: #2a3548;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+h1 { margin: 0; font-size: 1.25rem; }
+.meta { color: var(--muted); font-size: 0.9rem; }
+.grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+  padding: 1rem 1.5rem 0;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 0 1.5rem 1rem;
+}
+.grid .card { margin: 0; }
+h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.detail { font-size: 1rem; white-space: pre-line; }
+.detail .buy { color: var(--green); font-weight: 700; font-size: 1.2rem; }
+.detail .no-trade { color: var(--red); font-weight: 700; }
+.detail .wait { color: var(--yellow); font-weight: 700; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; }
+.buy-row { color: var(--green); }
+.no-row { color: var(--muted); }
+#settlements { list-style: none; padding: 0; margin: 0; }
+#settlements li { padding: 0.35rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}

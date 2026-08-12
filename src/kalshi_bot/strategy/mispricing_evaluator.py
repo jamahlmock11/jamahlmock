@@ -70,6 +70,8 @@ def evaluate_market_mispricing(
     options_prob: float | None = None,
     now: datetime | None = None,
     fee_rate: float = 0.07,
+    recent_trades: list[dict] | None = None,
+    kalshi_stale: bool = False,
 ) -> tuple[MarketEvaluationRecord, MispricingOpportunity, TradeDecision]:
     """Full mispricing pipeline for one KXBTC15M market."""
     config: V6Config = engine.config
@@ -108,13 +110,17 @@ def evaluate_market_mispricing(
         orderbook=orderbook,
         prev_spread=engine._prev_spread,
         prev_depth=engine._prev_depth,
+        recent_trades=recent_trades,
     )
     engine._prev_spread = micro.spread
     engine._prev_depth = (micro.depth_bid_10, micro.depth_ask_10)
     pa = compute_price_action(list(engine._price_history))
     regime = detect_regime(pa, micro)
 
-    kalshi_stale = micro.spread <= 0 and yes_ask is None
+    if kalshi_stale:
+        kalshi_stale_flag = True
+    else:
+        kalshi_stale_flag = micro.spread <= 0 and yes_ask is None
 
     settlement = estimate_settlement_probability(
         spot=spot,
@@ -137,7 +143,7 @@ def evaluate_market_mispricing(
         micro=micro,
         order_flow_label=btc.order_flow_label,
         volatility_label=btc.volatility_label,
-        kalshi_stale=kalshi_stale,
+        kalshi_stale=kalshi_stale_flag,
         fee_rate=fee_rate,
     )
 

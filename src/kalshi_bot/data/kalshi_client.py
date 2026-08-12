@@ -142,6 +142,46 @@ class KalshiClient:
     def get_orderbook(self, ticker: str, depth: int = 10) -> dict:
         return self.get(f"/markets/{ticker}/orderbook", depth=depth)
 
+    def get_market(self, ticker: str) -> dict:
+        data = self.get(f"/markets/{ticker}")
+        return data.get("market") or data
+
+    def get_trades(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+        min_ts: int | None = None,
+    ) -> dict:
+        params: dict[str, Any] = {"limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        if cursor:
+            params["cursor"] = cursor
+        if min_ts is not None:
+            params["min_ts"] = min_ts
+        return self.get("/markets/trades", **params)
+
+    def iter_trades(self, *, ticker: str, limit: int = 100, max_pages: int = 5):
+        cursor = None
+        pages = 0
+        while pages < max_pages:
+            page = self.get_trades(ticker=ticker, limit=limit, cursor=cursor)
+            for trade in page.get("trades") or []:
+                yield trade
+            cursor = page.get("cursor") or ""
+            pages += 1
+            if not cursor:
+                break
+
+    def websocket_url(self) -> str:
+        if "demo" in self.base_url:
+            return "wss://demo-api.kalshi.co/trade-api/ws/v2"
+        if "elections" in self.base_url:
+            return "wss://api.elections.kalshi.com/trade-api/ws/v2"
+        return "wss://api.elections.kalshi.com/trade-api/ws/v2"
+
     def get_balance(self) -> dict:
         return self.get("/portfolio/balance")
 

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KXBTC15M Mispricing Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>KXBTC15M Mispricing</h1>
+    <div id="meta" class="meta">Connecting…</div>
+  </header>
+
+  <section class="grid">
+    <div class="card" id="best-card">
+      <h2>Best Opportunity</h2>
+      <div id="best-detail" class="detail">Waiting for scan…</div>
+    </div>
+    <div class="card">
+      <h2>Calibration</h2>
+      <table id="calibration-table">
+        <thead><tr><th>Bucket</th><th>N</th><th>Empirical</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>All Opportunities</h2>
+    <table id="opp-table">
+      <thead>
+        <tr>
+          <th>Ticker</th><th>T-rem</th><th>Model</th><th>YES¢</th><th>Net¢</th>
+          <th>Conf</th><th>Flow</th><th>Tape TPS</th><th>Decision</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Recent Settlements</h2>
+    <ul id="settlements"></ul>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
