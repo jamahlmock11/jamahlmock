@@ -19,7 +19,7 @@ from kalshi_bot.models.volatility_regime import classify_vol_regime, neutral_reg
 from kalshi_bot.platform.decision_states import TradeSignal, signal_from_action
 from kalshi_bot.platform.observation import DataQuality, ObservationBundle
 from kalshi_bot.strategies.base import MarketDecision, StrategyEngine
-from kalshi_bot.strategy.mispricing_evaluator import evaluate_market_mispricing
+from kalshi_bot.strategy.price_patterns import PatternAssessment, detect_price_pattern
 from kalshi_bot.strategy.stale_price_detector import assess_stale_kalshi_price
 from kalshi_bot.strategy.mispricing_engine import TradeAction
 from kalshi_bot.strategy.v6_upgrades import V6IntelligenceEngine
@@ -175,6 +175,13 @@ class Kxbtc15mStrategy(StrategyEngine):
             if yes_mid is not None:
                 self._prev_yes_mid[ticker] = yes_mid
 
+            pattern = detect_price_pattern(
+                btc,
+                spot=spot,
+                strike=float(strike or spot),
+                seconds_to_expiry=secs,
+            )
+
             audit, opp, trade_dec = evaluate_market_mispricing(
                 self.engine,
                 market,
@@ -229,7 +236,7 @@ class Kxbtc15mStrategy(StrategyEngine):
                     f"regime={regime_label}"
                 )
             else:
-                why_not = self._explain_no_trade(audit, trade_dec_reason, net_edge, regime.edge_multiplier)
+                why_not = self._explain_no_trade(audit, trade_dec_reason, net_edge, regime.edge_multiplier, pattern, opp)
 
             decisions.append(
                 MarketDecision(
@@ -264,6 +271,12 @@ class Kxbtc15mStrategy(StrategyEngine):
                         "spread": audit.spread,
                         "scan_latency_ms": (time.time() - t0) * 1000,
                         "stale_lag_pp": stale_assess.lag_pp,
+                        "price_pattern": pattern.pattern.value,
+                        "pattern_finish_side": pattern.finish_side,
+                        "pattern_detail": pattern.detail,
+                        "yes_net_edge": audit.yes_side.net_edge_dollars,
+                        "no_net_edge": audit.no_side.net_edge_dollars,
+                        "executable_no": audit.no_side.executable_ask,
                     },
                     execute_verdict=audit.verdict if audit.verdict in ("TRADE_YES", "TRADE_NO") else None,
                     contracts=audit.contracts,
@@ -302,13 +315,15 @@ class Kxbtc15mStrategy(StrategyEngine):
         )
 
     @staticmethod
-    def _explain_no_trade(audit, reason: str, net_edge: float, edge_mult: float) -> str:
+    def _explain_no_trade(audit, reason: str, net_edge: float, edge_mult: float, pattern: PatternAssessment, opp) -> str:
         yes_ask = audit.yes_side.executable_ask
+        no_ask = audit.no_side.executable_ask
         lines = [
+            f"Pattern: {pattern.pattern.value} ({pattern.detail})",
             f"Model probability: {audit.model_prob_up*100:.1f}%",
-            f"Executable YES price: {(yes_ask or 0)*100:.0f}¢",
-            f"Raw edge: {max(audit.yes_side.raw_edge_dollars, audit.no_side.raw_edge_dollars)*100:.1f}¢",
-            f"Net edge: {net_edge*100:.1f}¢",
+            f"Executable YES: {(yes_ask or 0)*100:.0f}¢ (net {audit.yes_side.net_edge_dollars*100:.1f}¢)",
+            f"Executable NO: {(no_ask or 0)*100:.0f}¢ (net {audit.no_side.net_edge_dollars*100:.1f}¢)",
+            f"Best net edge: {net_edge*100:.1f}¢",
             f"Confidence: {audit.model_confidence:.0%}",
             f"Reason: {reason}",
         ]

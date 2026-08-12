@@ -93,6 +93,8 @@ def evaluate_market_mispricing(
     no_ask = market.get("no_ask")
     if no_ask is None and yes_bid is not None:
         no_ask = max(0.0, 1.0 - yes_bid)
+    elif no_ask is None and yes_ask is not None:
+        no_ask = max(0.01, min(0.99, 1.0 - yes_ask))
 
     secs = max((close - now).total_seconds(), 0) if close else 0
     mins = secs / 60.0

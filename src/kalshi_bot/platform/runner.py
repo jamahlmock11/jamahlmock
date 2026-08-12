@@ -271,6 +271,9 @@ class ProductionPlatform:
                 "why_not_trade": d.why_not_trade,
                 "agreement_score": d.features.get("agreement_score"),
                 "orderbook_source": d.features.get("orderbook_source", "rest"),
+                "price_pattern": d.features.get("price_pattern"),
+                "yes_net_edge": d.features.get("yes_net_edge"),
+                "no_net_edge": d.features.get("no_net_edge"),
             }
 
         opps_15m = [_row(d) for d in result.decisions_15m]

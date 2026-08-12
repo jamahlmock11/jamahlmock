@@ -179,7 +179,9 @@ function renderTable(tableId, opps, onSelect) {
       <td>${Number(o.model_yes || 0).toFixed(0)}%</td>
       <td>${Math.round((o.yes_ask || 0) * 100)}</td>
       <td>${Math.round((o.no_ask || 0) * 100)}</td>
-      <td>${((o.net_edge || 0) * 100).toFixed(1)}</td>
+      <td>${((o.yes_net_edge ?? o.net_edge || 0) * 100).toFixed(1)}</td>
+      <td>${((o.no_net_edge ?? 0) * 100).toFixed(1)}</td>
+      <td>${o.price_pattern || "—"}</td>
       <td>${o.confidence || ""}</td>
       <td>${o.regime || ""}</td>
       <td>${o.decision || ""}</td>`;
