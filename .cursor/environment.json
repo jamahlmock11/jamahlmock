@@ -1,6 +1,7 @@
 {
   "name": "jamahlmock11/jamahlmock",
   "install": "pip install -e \".[dev]\"",
+  "start": "python3 platform_run.py --web --port 8080 --execute",
   "ports": [
     {
       "name": "mispricing-dashboard",
