@@ -1,7 +1,7 @@
 {
   "name": "jamahlmock11/jamahlmock",
   "install": "pip install -e \".[dev]\"",
-  "start": "python3 platform_run.py --web --port 8080 --execute",
+  "start": "python3 platform_run.py --web --port 8080",
   "ports": [
     {
       "name": "mispricing-dashboard",
@@ -11,8 +11,8 @@
   "terminals": [
     {
       "name": "web-dashboard",
-      "command": "python3 platform_run.py --web --port 8080 --execute",
-      "description": "Production platform dashboard (KXBTC15M + KXBTCD) with live execution"
+      "command": "python3 platform_run.py --web --port 8080",
+      "description": "Production platform dashboard (KXBTC15M + KXBTCD) — scan only, no live orders"
     }
   ]
 }
