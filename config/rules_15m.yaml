@@ -32,22 +32,22 @@ quality:
 # Time-bucket edge floors (strategy tightens/loosens by minutes remaining)
 time_buckets:
   "15_10":
-    min_net_edge_dollars: 0.14
-    min_raw_edge_dollars: 0.18
+    min_net_edge_dollars: 0.18
+    min_raw_edge_dollars: 0.22
     size_multiplier: 0.60
   "10_7":
-    min_net_edge_dollars: 0.12
-    min_raw_edge_dollars: 0.16
+    min_net_edge_dollars: 0.15
+    min_raw_edge_dollars: 0.19
     size_multiplier: 0.75
   "7_5":
-    min_net_edge_dollars: 0.10
-    min_raw_edge_dollars: 0.14
+    min_net_edge_dollars: 0.13
+    min_raw_edge_dollars: 0.17
     size_multiplier: 0.85
   "5_3":
-    min_net_edge_dollars: 0.08
-    min_raw_edge_dollars: 0.12
+    min_net_edge_dollars: 0.11
+    min_raw_edge_dollars: 0.15
     size_multiplier: 1.0
   "3_1":
-    min_net_edge_dollars: 0.06
-    min_raw_edge_dollars: 0.10
+    min_net_edge_dollars: 0.09
+    min_raw_edge_dollars: 0.13
     size_multiplier: 0.70
