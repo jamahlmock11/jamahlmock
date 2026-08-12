@@ -9,6 +9,7 @@ class RejectionCode(str, Enum):
     """Primary reason a market evaluation did not produce a trade."""
 
     NONE = "NONE"  # trade allowed
+    RULES_NOT_CONFIGURED = "RULES_NOT_CONFIGURED"
     NO_MARKET = "NO_MARKET"
     STALE_DATA = "STALE_DATA"
     MISSING_DATA = "MISSING_DATA"
@@ -35,6 +36,7 @@ class RejectionCode(str, Enum):
 # Human-readable descriptions for reports.
 REJECTION_DESCRIPTIONS: dict[RejectionCode, str] = {
     RejectionCode.NONE: "Trade passed all gates",
+    RejectionCode.RULES_NOT_CONFIGURED: "15-minute bot trading rules are disabled or not configured",
     RejectionCode.NO_MARKET: "No open market in evaluation window",
     RejectionCode.STALE_DATA: "Price or benchmark data is stale",
     RejectionCode.MISSING_DATA: "Required field missing (book, strike, close)",

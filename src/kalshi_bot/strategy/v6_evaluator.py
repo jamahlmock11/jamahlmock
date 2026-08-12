@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from kalshi_bot.config import ArbitraryPolicyConfig, V6Config
+from kalshi_bot.config import Rules15mConfig, V6Config
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.strategy.arbitrary_policy import EdgeChaseGuard, evaluate_arbitrary
 from kalshi_bot.strategy.decision_record import (
@@ -40,6 +40,101 @@ from kalshi_bot.strategy.v6_upgrades import (
     strike_gravity_bias,
     strict_edge_gap_dollars,
 )
+
+
+def _blank_side(side: str) -> SideEvaluation:
+    return SideEvaluation(
+        side=side,
+        model_probability=0.5,
+        executable_ask=None,
+        raw_edge_dollars=0.0,
+        estimated_fee=0.0,
+        estimated_slippage=0.0,
+        net_edge_dollars=0.0,
+        expected_value_per_contract=0.0,
+        passes_edge_threshold=False,
+        passes_net_ev=False,
+        rejection_codes=[RejectionCode.RULES_NOT_CONFIGURED],
+    )
+
+
+def _min_edge_floor(rules: Rules15mConfig) -> float:
+    if rules.strict_edge.min_gap_dollars is not None:
+        return rules.strict_edge.min_gap_dollars
+    if rules.tiers.edge_experimental is not None:
+        return rules.tiers.edge_experimental
+    return 0.0
+
+
+def _rules_not_configured_record(
+    *,
+    ticker: str,
+    series: str,
+    now: datetime,
+    secs: float,
+    mins: float,
+    spot: float,
+    spot_source: str,
+    strike: float,
+    filter_checks: list[FilterCheck],
+) -> MarketEvaluationRecord:
+    yes_side = _blank_side("YES")
+    no_side = _blank_side("NO")
+    filter_checks.append(
+        FilterCheck(
+            "rules",
+            False,
+            RejectionCode.RULES_NOT_CONFIGURED,
+            "15-minute bot trading rules are disabled",
+        )
+    )
+    return MarketEvaluationRecord(
+        ticker=ticker,
+        series=series,
+        evaluated_at=now,
+        seconds_to_expiry=secs,
+        minutes_to_expiry=mins,
+        spot=spot,
+        spot_source=spot_source,
+        strike=strike,
+        model_prob_up=0.5,
+        model_prob_down=0.5,
+        model_confidence=0.0,
+        model_disagreement_pp=0.0,
+        monte_carlo_prob=0.5,
+        options_implied_prob=None,
+        calibrated=False,
+        yes_bid=None,
+        yes_ask=None,
+        no_ask=None,
+        spread=0.0,
+        yes_side=yes_side,
+        no_side=no_side,
+        best_side=None,
+        best_net_edge=0.0,
+        liquidity_score=0.0,
+        bid_ask_imbalance=0.0,
+        order_book_depth_bid=0.0,
+        order_book_depth_ask=0.0,
+        data_freshness=DataFreshness(
+            cf_benchmark="MISSING",
+            btc_spot="MISSING",
+            order_book="MISSING",
+            options_smile="MISSING",
+        ),
+        filter_checks=filter_checks,
+        all_rejection_codes=[RejectionCode.RULES_NOT_CONFIGURED],
+        setup_tier="NONE",
+        opportunity_score=0.0,
+        verdict="NO_TRADE",
+        primary_rejection=RejectionCode.RULES_NOT_CONFIGURED,
+        contracts=0,
+        regime="",
+        explainability=0.0,
+        edge_quality="NO_TRADE",
+        edge_action="🔴 No trade",
+        trade_reason="Configure config/rules_15m.yaml and set enabled: true",
+    )
 
 
 def _evaluate_side(
@@ -110,6 +205,7 @@ def evaluate_market_audited(
 ) -> MarketEvaluationRecord:
     """Full audited evaluation with structured rejection codes."""
     config = engine.config
+    rules = engine.rules
     now = now or datetime.now(timezone.utc)
     engine.update_spot(spot)
 
@@ -133,6 +229,22 @@ def evaluate_market_audited(
     open_secs = 0.0
     if open_t and close:
         open_secs = max((now - open_t).total_seconds(), 0)
+
+    if not rules.enabled:
+        return _rules_not_configured_record(
+            ticker=ticker,
+            series=series,
+            now=now,
+            secs=secs,
+            mins=mins,
+            spot=spot,
+            spot_source=spot_source,
+            strike=strike,
+            filter_checks=filter_checks,
+        )
+
+    tier_cfg = rules.tiers
+    quality_rules = rules.quality
 
     timing_ok = (
         secs >= config.min_seconds_to_expiry
@@ -207,6 +319,11 @@ def evaluate_market_audited(
     regime = detect_regime(pa, micro)
     manip = detect_manipulation(micro, pa)
 
+    max_disagreement_pp = (
+        quality_rules.max_model_disagreement_pp
+        if quality_rules.max_model_disagreement_pp is not None
+        else config.max_model_disagreement_pp
+    )
     ensemble = multi_model_ensemble(
         spot=spot,
         strike=strike,
@@ -216,7 +333,7 @@ def evaluate_market_audited(
         micro=micro,
         price_action=pa,
         options_prob=options_prob,
-        max_disagreement_pp=config.max_model_disagreement_pp,
+        max_disagreement_pp=max_disagreement_pp,
     )
 
     mc_mean, _, _ = monte_carlo_binary(
@@ -235,44 +352,60 @@ def evaluate_market_audited(
     raw_prob = max(0.01, min(0.99, raw_prob))
     model_prob, calibrated = engine.calibrator.calibrate(raw_prob)
 
+    spread_limit = quality_rules.max_spread if quality_rules.max_spread is not None else 1.0
+    liquidity_floor = (
+        quality_rules.min_liquidity_score
+        if quality_rules.min_liquidity_score is not None
+        else 0.0
+    )
     quality = assess_market_quality(
         micro=micro,
         price_action=pa,
         ensemble=ensemble,
-        spread_limit=config.max_spread,
-        min_liquidity=config.min_liquidity_score,
+        spread_limit=spread_limit,
+        min_liquidity=liquidity_floor,
         manipulation_flag=manip,
     )
 
     # --- Individual filter checks ---
-    spread_ok = micro.spread <= config.max_spread
-    if not spread_ok:
-        all_rejections.append(RejectionCode.SPREAD_TOO_WIDE)
-        filter_checks.append(
-            FilterCheck(
-                "spread",
-                False,
-                RejectionCode.SPREAD_TOO_WIDE,
-                f"{micro.spread*100:.1f}¢ > {config.max_spread*100:.0f}¢",
+    if quality_rules.max_spread is not None:
+        spread_ok = micro.spread <= quality_rules.max_spread
+        if not spread_ok:
+            all_rejections.append(RejectionCode.SPREAD_TOO_WIDE)
+            filter_checks.append(
+                FilterCheck(
+                    "spread",
+                    False,
+                    RejectionCode.SPREAD_TOO_WIDE,
+                    f"{micro.spread*100:.1f}¢ > {quality_rules.max_spread*100:.0f}¢",
+                )
             )
-        )
+        else:
+            filter_checks.append(FilterCheck("spread", True, detail=f"{micro.spread*100:.1f}¢"))
     else:
-        filter_checks.append(FilterCheck("spread", True, detail=f"{micro.spread*100:.1f}¢"))
+        spread_ok = True
+        filter_checks.append(FilterCheck("spread", True, detail="no spread rule configured"))
 
-    liq_ok = micro.liquidity_score >= config.min_liquidity_score
-    if not liq_ok:
-        all_rejections.append(RejectionCode.INSUFFICIENT_LIQUIDITY)
-        filter_checks.append(
-            FilterCheck(
-                "liquidity",
-                False,
-                RejectionCode.INSUFFICIENT_LIQUIDITY,
-                f"score={micro.liquidity_score:.2f}",
+    if quality_rules.min_liquidity_score is not None:
+        liq_ok = micro.liquidity_score >= quality_rules.min_liquidity_score
+        if not liq_ok:
+            all_rejections.append(RejectionCode.INSUFFICIENT_LIQUIDITY)
+            filter_checks.append(
+                FilterCheck(
+                    "liquidity",
+                    False,
+                    RejectionCode.INSUFFICIENT_LIQUIDITY,
+                    f"score={micro.liquidity_score:.2f}",
+                )
             )
-        )
+        else:
+            filter_checks.append(
+                FilterCheck("liquidity", True, detail=f"score={micro.liquidity_score:.2f}")
+            )
     else:
+        liq_ok = True
         filter_checks.append(
-            FilterCheck("liquidity", True, detail=f"score={micro.liquidity_score:.2f}")
+            FilterCheck("liquidity", True, detail="no liquidity rule configured")
         )
 
     if not ensemble.models_agree:
@@ -314,22 +447,29 @@ def evaluate_market_audited(
         "liquidity_score": micro.liquidity_score,
         "regime": regime.value,
     }
+    pattern_min = quality_rules.min_pattern_examples
+    if pattern_min is None:
+        pattern_min = config.min_pattern_examples
     pattern_n, _ = engine.journal.similar_setups(
-        feat_dict, min_examples=config.min_pattern_examples
+        feat_dict, min_examples=pattern_min
     )
-    if pattern_n < config.min_pattern_examples and config.require_pattern_evidence:
+    if (
+        quality_rules.require_pattern_evidence
+        and quality_rules.min_pattern_examples is not None
+        and pattern_n < quality_rules.min_pattern_examples
+    ):
         all_rejections.append(RejectionCode.PATTERN_EVIDENCE_INSUFFICIENT)
         filter_checks.append(
             FilterCheck(
                 "pattern",
                 False,
                 RejectionCode.PATTERN_EVIDENCE_INSUFFICIENT,
-                f"{pattern_n}<{config.min_pattern_examples}",
+                f"{pattern_n}<{quality_rules.min_pattern_examples}",
             )
         )
 
-    # --- Both sides evaluated independently (10¢ floor) ---
-    min_edge = config.tiers.edge_experimental
+    # --- Both sides evaluated independently ---
+    min_edge = _min_edge_floor(rules)
     yes_side = _evaluate_side(
         side="YES",
         model_prob=model_prob,
@@ -378,13 +518,17 @@ def evaluate_market_audited(
     best_net_for_tier = best_eval.net_edge_dollars if best_eval else 0.0
     best_raw = best_eval.raw_edge_dollars if best_eval else 0.0
 
-    if not quality.tradeable and best_raw < config.tiers.edge_conditional:
+    if (
+        not quality.tradeable
+        and tier_cfg.edge_conditional is not None
+        and best_raw < tier_cfg.edge_conditional
+    ):
         all_rejections.append(RejectionCode.QUALITY_SCORE_TOO_HIGH)
 
     edge_quality = classify_edge_quality(
         best_net_for_tier,
         raw_edge_dollars=best_raw,
-        config=config.tiers,
+        config=tier_cfg,
     )
 
     tier_result = classify_tier(
@@ -395,7 +539,7 @@ def evaluate_market_audited(
         spread_ok=spread_ok,
         model_agrees=ensemble.models_agree,
         no_conflicts=not manip and pa.breakout_signal != "fake_breakout",
-        config=config.tiers,
+        config=tier_cfg,
     )
 
     opp_score = opportunity_score(
@@ -426,7 +570,7 @@ def evaluate_market_audited(
         seconds_to_expiry=secs,
         min_seconds_to_expiry=config.min_seconds_to_expiry,
         max_seconds_to_expiry=config.max_seconds_to_expiry,
-        base_min_edge_pp=config.tiers.edge_experimental * 100.0,
+        base_min_edge_pp=_min_edge_floor(rules) * 100.0,
         fee_rate=fee_rate,
         confidence=ensemble.agreement_score,
         disagreement_pp=(
@@ -436,8 +580,9 @@ def evaluate_market_audited(
         sufficient_evidence=ensemble.models_agree,
         calibrator=engine.calibrator,
         chase_guard=engine.chase_guard,
-        policy_cfg=engine.arbitrary_cfg,
-    ) if engine.arbitrary_cfg.enabled else None
+        policy_cfg=rules.arbitrary,
+        bot_action_cfg=rules.bot_action,
+    ) if rules.arbitrary.enabled else None
 
     if arb is not None and arb.chase_blocked:
         all_rejections.append(RejectionCode.EDGE_TOO_SMALL)
@@ -457,7 +602,7 @@ def evaluate_market_audited(
             no_manipulation=not manip,
             net_ev_positive=net_ev_ok,
             net_edge_dollars=best_net_for_tier,
-            config=config.tiers,
+            config=tier_cfg,
         )
 
         arbitrary_ok = (
@@ -465,9 +610,9 @@ def evaluate_market_audited(
             and arb.verdict != "NO_TRADE"
             and arb.chosen_side == best_side
         )
-        if can_trade and config.tiers.enabled_for_live and arbitrary_ok:
+        if can_trade and tier_cfg.enabled_for_live and arbitrary_ok:
             verdict = f"TRADE_{best_side}"
-        elif can_trade and config.tiers.enabled_for_live and arb is not None and arb.verdict == "NO_TRADE":
+        elif can_trade and tier_cfg.enabled_for_live and arb is not None and arb.verdict == "NO_TRADE":
             all_rejections.extend(
                 [RejectionCode.EDGE_TOO_SMALL]
                 if any("overpriced_favorite" in b for b in arb.blockers)
@@ -511,7 +656,7 @@ def evaluate_market_audited(
         )
         contracts = max(0, int(base_contracts * edge_quality.size_multiplier))
         if edge_quality.quality == EdgeQuality.EXPERIMENTAL:
-            contracts = min(contracts, config.tiers.experimental_max_contracts)
+            contracts = min(contracts, tier_cfg.experimental_max_contracts)
 
     return MarketEvaluationRecord(
         ticker=ticker,

@@ -62,6 +62,10 @@ class TierAssessment:
     detail: str
 
 
+def _tier_threshold(cfg: TierEdgeConfig, name: str) -> float | None:
+    return getattr(cfg, name)
+
+
 def classify_edge_quality(
     net_edge_dollars: float,
     *,
@@ -74,13 +78,29 @@ def classify_edge_quality(
     tier_edge = raw if cfg.use_raw_edge_for_tiers else net_edge_dollars
     cents = tier_edge * 100
 
-    if cents >= cfg.edge_exceptional * 100:
+    exceptional = _tier_threshold(cfg, "edge_exceptional")
+    strong = _tier_threshold(cfg, "edge_strong")
+    conditional = _tier_threshold(cfg, "edge_conditional")
+    experimental = _tier_threshold(cfg, "edge_experimental")
+    if None in (exceptional, strong, conditional, experimental):
+        return EdgeQualityAssessment(
+            quality=EdgeQuality.NO_TRADE,
+            net_edge_dollars=net_edge_dollars,
+            raw_edge_dollars=raw,
+            action_label=EDGE_ACTION_LABEL[EdgeQuality.NO_TRADE],
+            trades_allowed=False,
+            requires_confirmation=False,
+            size_multiplier=0.0,
+            detail="tier thresholds not configured",
+        )
+
+    if cents >= exceptional * 100:
         q = EdgeQuality.EXCEPTIONAL
-    elif cents >= cfg.edge_strong * 100:
+    elif cents >= strong * 100:
         q = EdgeQuality.STRONG
-    elif cents >= cfg.edge_conditional * 100:
+    elif cents >= conditional * 100:
         q = EdgeQuality.CONDITIONAL
-    elif cents >= cfg.edge_experimental * 100:
+    elif cents >= experimental * 100:
         q = EdgeQuality.EXPERIMENTAL
     else:
         q = EdgeQuality.NO_TRADE
@@ -94,7 +114,7 @@ def classify_edge_quality(
             trades_allowed=False,
             requires_confirmation=False,
             size_multiplier=0.0,
-            detail=f"edge={cents:.1f}¢ < {cfg.edge_experimental*100:.0f}¢ floor",
+            detail=f"edge={cents:.1f}¢ < {experimental*100:.0f}¢ floor",
         )
 
     requires_conf = q == EdgeQuality.CONDITIONAL
@@ -130,8 +150,9 @@ def confirmation_passes(
     cfg = config or TierEdgeConfig()
     if cfg.conditional_requires_model_agree and not model_agrees:
         return False, "models disagree"
-    if model_confidence < cfg.conditional_min_confidence:
-        return False, f"confidence {model_confidence:.2f} < {cfg.conditional_min_confidence:.2f}"
+    min_conf = _tier_threshold(cfg, "conditional_min_confidence")
+    if min_conf is not None and model_confidence < min_conf:
+        return False, f"confidence {model_confidence:.2f} < {min_conf:.2f}"
     if not liquidity_ok:
         return False, "liquidity insufficient"
     if not spread_ok:
@@ -146,12 +167,19 @@ def _net_ev_ok_for_tier(
     net_edge: float,
     config: TierEdgeConfig,
 ) -> bool:
+    min_strong = _tier_threshold(config, "min_net_edge_strong")
+    min_experimental = _tier_threshold(config, "min_net_edge_experimental")
     if edge.quality in (EdgeQuality.EXCEPTIONAL, EdgeQuality.STRONG):
-        return net_edge >= config.min_net_edge_strong
+        return net_edge >= (min_strong if min_strong is not None else 0.0)
     if edge.quality == EdgeQuality.EXPERIMENTAL:
-        return net_edge >= config.min_net_edge_experimental
+        return net_edge >= (min_experimental if min_experimental is not None else 0.0)
     # Conditional: small negative net ok if raw edge is solid
-    return net_edge >= config.min_net_edge_experimental
+    experimental = _tier_threshold(config, "edge_experimental")
+    floor = min_experimental if min_experimental is not None else 0.0
+    raw_floor = experimental if experimental is not None else 0.0
+    return net_edge >= floor or (
+        config.use_raw_edge_for_tiers and edge.raw_edge_dollars >= raw_floor
+    )
 
 
 def should_trade_for_quality(
@@ -173,7 +201,12 @@ def should_trade_for_quality(
         return False, edge.detail
 
     net_ok = _net_ev_ok_for_tier(edge, net_edge_dollars, cfg)
-    if not net_ok and not (cfg.use_raw_edge_for_tiers and edge.raw_edge_dollars >= cfg.edge_experimental):
+    experimental = _tier_threshold(cfg, "edge_experimental")
+    if not net_ok and not (
+        cfg.use_raw_edge_for_tiers
+        and experimental is not None
+        and edge.raw_edge_dollars >= experimental
+    ):
         return False, f"net EV {net_edge_dollars*100:.1f}¢ below floor"
 
     if edge.quality in (EdgeQuality.EXCEPTIONAL, EdgeQuality.STRONG):
