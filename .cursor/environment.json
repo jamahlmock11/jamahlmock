@@ -1,0 +1,17 @@
+{
+  "name": "jamahlmock11/jamahlmock",
+  "install": "pip install -e \".[dev]\"",
+  "ports": [
+    {
+      "name": "mispricing-dashboard",
+      "port": 8080
+    }
+  ],
+  "terminals": [
+    {
+      "name": "web-dashboard",
+      "command": "python3 run.py --web --port 8080",
+      "description": "KXBTC15M mispricing web dashboard with background scan loop"
+    }
+  ]
+}

@@ -56,10 +56,13 @@ function renderCalibration(rows) {
   tbody.innerHTML = "";
   for (const r of rows || []) {
     const tr = document.createElement("tr");
+    const empirical = r.empirical_win_rate;
+    const empiricalText =
+      empirical == null || Number.isNaN(empirical) ? "—" : `${(empirical * 100).toFixed(0)}%`;
     tr.innerHTML = `
-      <td>${r.range}</td>
-      <td>${r.n_trades}</td>
-      <td>${(r.empirical_win_rate * 100).toFixed(0)}%</td>
+      <td>${r.range || ""}</td>
+      <td>${r.n_trades ?? 0}</td>
+      <td>${empiricalText}</td>
       <td>${r.calibrated ? "✓ calibrated" : "collecting"}</td>`;
     tbody.appendChild(tr);
   }
@@ -76,10 +79,17 @@ function renderSettlements(items) {
 }
 
 function applyState(data) {
-  document.getElementById("meta").textContent =
-    data.status === "ok"
-      ? `BTC $${Number(data.spot).toLocaleString()} · scanned ${data.markets_scanned} · ${data.asof || ""}`
-      : "Waiting for first scan…";
+  const meta = document.getElementById("meta");
+  if (!data || data.status === "no_data") {
+    meta.textContent =
+      "Waiting for first scan… Run: python run.py --web (from repo root)";
+    renderBest(null);
+    renderTable([]);
+    renderCalibration([]);
+    renderSettlements([]);
+    return;
+  }
+  meta.textContent = `BTC $${Number(data.spot).toLocaleString()} · scanned ${data.markets_scanned} · ${data.asof || ""}`;
   const opps = data.opportunities || [];
   renderBest(opps[0] || null);
   renderTable(opps);
@@ -90,9 +100,28 @@ function applyState(data) {
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
-  ws.onmessage = (ev) => applyState(JSON.parse(ev.data));
+  ws.onmessage = (ev) => {
+    try {
+      applyState(JSON.parse(ev.data));
+    } catch (err) {
+      console.error("bad websocket payload", err);
+    }
+  };
+  ws.onerror = () => {
+    document.getElementById("meta").textContent =
+      "WebSocket error — retrying…";
+  };
   ws.onclose = () => setTimeout(connect, 3000);
 }
 
-fetch("/api/state").then((r) => r.json()).then(applyState).catch(() => {});
+fetch("/api/state")
+  .then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  })
+  .then(applyState)
+  .catch(() => {
+    document.getElementById("meta").textContent =
+      "Cannot reach API — is the server running? Try: python run.py --web";
+  });
 connect();

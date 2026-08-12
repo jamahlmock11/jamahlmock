@@ -884,9 +884,13 @@ def run_web(
 
     worker = threading.Thread(target=scan_loop, name="web-scan", daemon=True)
     worker.start()
-    console.print(f"[green]Web dashboard at http://{host}:{port}[/green] (scan every {sleep_s:.0f}s)")
+    console.print(
+        f"[green]Web dashboard at http://localhost:{port}[/green] "
+        f"(scan every {sleep_s:.0f}s)\n"
+        "[dim]Cloud Agent: open the forwarded port URL from the Ports panel, not your local localhost[/dim]"
+    )
     try:
-        run_server(host=host, port=port)
+        run_server(host=host, port=port, with_scan=False)
     finally:
         stop.set()
         trade_tape.close()

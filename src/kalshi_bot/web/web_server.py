@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
+import os
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -16,10 +20,124 @@ logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="KXBTC15M Mispricing Dashboard", version="1.0")
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 _ws_clients: list[WebSocket] = []
+_scan_stop: threading.Event | None = None
+_scan_cleanup: list = []
+
+
+def _find_repo_root() -> Path | None:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "run.py").is_file() and (parent / "src" / "kalshi_bot").is_dir():
+            return parent
+    cwd = Path.cwd()
+    if (cwd / "run.py").is_file():
+        return cwd
+    return None
+
+
+def _load_run_module(root: Path):
+    spec = importlib.util.spec_from_file_location("kalshi_run", root / "run.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load run.py from {root}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _start_background_scan() -> None:
+    """Start mispricing scan loop so the dashboard has live data."""
+    global _scan_stop, _scan_cleanup
+
+    root = _find_repo_root()
+    if root is None:
+        logger.warning(
+            "run.py not found — start the dashboard with: python run.py --web "
+            "(from the repository root)"
+        )
+        return
+
+    try:
+        run_mod = _load_run_module(root)
+        os.chdir(root)
+    except Exception as exc:
+        logger.warning("could not start background scan: %s", exc)
+        return
+
+    _scan_stop = threading.Event()
+    resources: dict = {}
+
+    def scan_loop() -> None:
+        try:
+            (
+                _settings,
+                config,
+                client,
+                _engine,
+                scanner,
+                executor,
+                _btc,
+                trade_tape,
+                settlement,
+            ) = run_mod.build_v6_runtime()
+            resources["client"] = client
+            resources["trade_tape"] = trade_tape
+            sleep_s = config.scan_interval_seconds
+            smile = None
+            while _scan_stop is not None and not _scan_stop.is_set():
+                try:
+                    if smile is None:
+                        try:
+                            from kalshi_bot.data.ibit_options import load_ibit_smile
+
+                            smile = load_ibit_smile(config.smile, allow_synthetic=False)
+                        except Exception:
+                            smile = None
+                    scanner.scan(smile)
+                except Exception:
+                    logger.exception("background scan failed")
+                if _scan_stop.wait(sleep_s):
+                    break
+        except Exception:
+            logger.exception("background scan thread failed to start")
+
+    thread = threading.Thread(target=scan_loop, name="web-scan", daemon=True)
+    thread.start()
+    _scan_cleanup = [resources]
+    logger.info("Background mispricing scan started (repo: %s)", root)
+
+
+def _stop_background_scan() -> None:
+    global _scan_stop, _scan_cleanup
+    if _scan_stop is not None:
+        _scan_stop.set()
+    for resources in _scan_cleanup:
+        tape = resources.get("trade_tape")
+        client = resources.get("client")
+        if tape is not None:
+            try:
+                tape.close()
+            except Exception:
+                pass
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+    _scan_stop = None
+    _scan_cleanup = []
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if getattr(app.state, "with_scan", True):
+        _start_background_scan()
+    yield
+    _stop_background_scan()
+
+
+app = FastAPI(title="KXBTC15M Mispricing Dashboard", version="1.0", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
@@ -34,7 +152,12 @@ async def api_state():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    snap = GLOBAL_SCAN_STATE.get()
+    return {
+        "status": "ok",
+        "has_data": snap is not None,
+        "markets_scanned": snap.markets_scanned if snap else 0,
+    }
 
 
 @app.websocket("/ws/live")
@@ -66,7 +189,18 @@ async def broadcast_state() -> None:
             _ws_clients.remove(ws)
 
 
-def run_server(*, host: str = "0.0.0.0", port: int = 8080) -> None:
+def run_server(*, host: str = "0.0.0.0", port: int = 8080, with_scan: bool = True) -> None:
     import uvicorn
 
+    root = _find_repo_root()
+    if root is not None:
+        os.chdir(root)
+
+    logger.info(
+        "Mispricing dashboard listening on http://%s:%d — "
+        "in Cloud Agent, open the forwarded port URL from the Ports panel",
+        host if host != "0.0.0.0" else "localhost",
+        port,
+    )
+    app.state.with_scan = with_scan
     uvicorn.run(app, host=host, port=port, log_level="info")
