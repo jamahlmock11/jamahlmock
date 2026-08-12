@@ -737,10 +737,10 @@ class V6IntelligenceEngine:
 
         if not self.rules.enabled or self.rules.mode != "mispricing":
             from kalshi_bot.strategy.decision_record import FilterCheck
-            from kalshi_bot.strategy.v6_evaluator import _rules_not_configured_record
+            from kalshi_bot.strategy.rules_guard import rules_not_configured_record
 
             filter_checks: list[FilterCheck] = []
-            audit = _rules_not_configured_record(
+            audit = rules_not_configured_record(
                 ticker=ticker,
                 series=str(market.get("series_ticker") or self.config.series_ticker),
                 now=now,

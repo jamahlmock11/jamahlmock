@@ -99,6 +99,7 @@ h2 { margin: 0 0 0.75rem; font-size: 0.95rem; color: var(--muted); text-transfor
 .detail .no-trade, tr.no-trade { color: var(--muted); }
 .detail .wait, tr.wait { color: var(--yellow); }
 .detail .error, tr.error { color: var(--red); }
+.muted { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
 .detail .buy { font-weight: 700; font-size: 1.1rem; }
 .detail .strong-buy { font-weight: 800; font-size: 1.15rem; }
 .detail .no-trade { font-weight: 700; }

@@ -7,6 +7,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from kalshi_bot.data.kalshi_client import KalshiClient, normalize_market
 from kalshi_bot.strategy.v6_upgrades import V6IntelligenceEngine
@@ -36,9 +37,10 @@ class PendingEntry:
 class SettlementIngestor:
     """Polls Kalshi for settled markets and updates journal + calibrator."""
 
-    def __init__(self, journal_path: str) -> None:
+    def __init__(self, journal_path: str, micro_calibrator: Any | None = None) -> None:
         self.path = Path(journal_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.micro_calibrator = micro_calibrator
         self._init_db()
 
     def _init_db(self) -> None:
@@ -58,9 +60,23 @@ class SettlementIngestor:
                     net_edge REAL,
                     reason TEXT,
                     opened_ts REAL,
-                    settled INTEGER DEFAULT 0
+                    settled INTEGER DEFAULT 0,
+                    won INTEGER,
+                    pnl REAL,
+                    result TEXT,
+                    settled_ts REAL
                 )"""
             )
+            # Migrate older DBs missing outcome columns
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_entries)").fetchall()}
+            for col, typ in (
+                ("won", "INTEGER"),
+                ("pnl", "REAL"),
+                ("result", "TEXT"),
+                ("settled_ts", "REAL"),
+            ):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE pending_entries ADD COLUMN {col} {typ}")
 
     def record_entry(
         self,
@@ -170,7 +186,22 @@ class SettlementIngestor:
             )
 
             with sqlite3.connect(self.path) as conn:
-                conn.execute("UPDATE pending_entries SET settled=1 WHERE id=?", (entry.id,))
+                conn.execute(
+                    """UPDATE pending_entries
+                    SET settled=1, won=?, pnl=?, result=?, settled_ts=?
+                    WHERE id=?""",
+                    (int(side_won), pnl, result, time.time(), entry.id),
+                )
+
+            if self.micro_calibrator is not None:
+                self.micro_calibrator.record_from_features(
+                    ticker=entry.ticker,
+                    side=entry.side,
+                    prediction=entry.prediction,
+                    won=side_won,
+                    features=features,
+                    ts=time.time(),
+                )
 
             resolved.append(
                 {
@@ -205,3 +236,33 @@ class SettlementIngestor:
                 }
             )
         return buckets
+
+    def settled_trades(self, *, limit: int = 500) -> list[dict]:
+        """Resolved entries with outcomes for time-bucket analytics."""
+        with sqlite3.connect(self.path) as conn:
+            rows = conn.execute(
+                """SELECT ticker, side, prediction, confidence, net_edge, seconds_to_expiry,
+                          won, pnl, result, settled_ts, features
+                   FROM pending_entries
+                   WHERE settled=1 AND won IS NOT NULL
+                   ORDER BY settled_ts DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "ticker": r[0],
+                    "side": r[1],
+                    "prediction": r[2],
+                    "confidence": r[3],
+                    "net_edge": r[4],
+                    "seconds_to_expiry": r[5],
+                    "won": bool(r[6]),
+                    "pnl": r[7],
+                    "result": r[8],
+                    "settled_ts": r[9],
+                    "features": r[10],
+                }
+            )
+        return out

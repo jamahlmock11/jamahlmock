@@ -49,6 +49,46 @@ function renderSafety(safety, freshness) {
 ${s.block_reason ? `<div class="block-reason">${s.block_reason}</div>` : ""}`;
 }
 
+function renderTimeBuckets(rows, summary) {
+  const tbody = document.querySelector("#time-bucket-table tbody");
+  tbody.innerHTML = "";
+  for (const r of rows || []) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.label || r.bucket || ""}</td>
+      <td>${r.n_trades ?? 0}</td>
+      <td>${r.win_rate == null ? "—" : `${(r.win_rate * 100).toFixed(0)}%`}</td>
+      <td>${r.avg_net_edge == null ? "—" : `${(r.avg_net_edge * 100).toFixed(1)}¢`}</td>
+      <td>${fmtUsd(r.total_pnl)}</td>
+      <td>${r.brier_score == null ? "—" : r.brier_score.toFixed(3)}</td>`;
+    tbody.appendChild(tr);
+  }
+  const el = document.getElementById("time-bucket-summary");
+  if (summary?.recommendation) {
+    el.textContent = summary.recommendation;
+  } else {
+    el.textContent = "Need ≥3 settled trades per bucket for recommendations.";
+  }
+}
+
+function renderMicroCalibration(micro, perfMicro) {
+  const data = micro || perfMicro || {};
+  const el = document.getElementById("micro-calibration");
+  if (!data || !data.n_total) {
+    el.textContent = "No settled trades with microstructure features yet.";
+    return;
+  }
+  const uplift = data.brier_uplift_when_agrees;
+  el.innerHTML = `
+Samples: ${data.n_total} (${data.n_micro_agrees} agree / ${data.n_micro_disagrees} disagree)
+Baseline Brier: ${data.baseline_brier?.toFixed(3) ?? "—"}
+Agree Brier: ${data.agree_brier?.toFixed(3) ?? "—"}
+Disagree Brier: ${data.disagree_brier?.toFixed(3) ?? "—"}
+Uplift when micro agrees: ${uplift == null ? "—" : uplift.toFixed(3)}
+Status: ${data.status || "collecting"}
+${data.recommend_use_microstructure ? "✓ Microstructure improves calibration" : "— Still collecting evidence"}`;
+}
+
 function renderPerformance(perf) {
   const el = document.getElementById("performance-detail");
   if (!perf || Object.keys(perf).length === 0) {
@@ -57,9 +97,22 @@ function renderPerformance(perf) {
   }
   const lines = [];
   for (const [strategy, data] of Object.entries(perf)) {
+    if (strategy === "time_buckets" || strategy === "time_bucket_summary" || strategy === "microstructure") {
+      continue;
+    }
     const signals = data.signals || {};
     const sigText = Object.entries(signals).map(([k, v]) => `${k}: ${v}`).join(", ") || "—";
-    lines.push(`${strategy}: ${data.trade_count ?? 0} markets · ${sigText}`);
+    let line = `${strategy}: ${data.trade_count ?? 0} markets · ${sigText}`;
+    if (data.settled_trades != null) {
+      line += ` · settled ${data.settled_trades}`;
+    }
+    if (data.win_rate != null) {
+      line += ` · win ${(data.win_rate * 100).toFixed(0)}%`;
+    }
+    if (data.total_pnl != null) {
+      line += ` · P&L ${fmtUsd(data.total_pnl)}`;
+    }
+    lines.push(line);
   }
   el.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 }
@@ -186,6 +239,8 @@ function applyState(data) {
     renderLiveBanner(null, null);
     renderSafety(null, null);
     renderPerformance(null);
+    renderTimeBuckets([], null);
+    renderMicroCalibration(null, null);
     renderBestCard("best-15m-detail", null, "KXBTC15M");
     renderBestCard("best-1h-detail", null, "KXBTCD");
     renderTable("opp-table-15m", [], () => {});
@@ -204,6 +259,11 @@ function applyState(data) {
   renderLiveBanner(data.safety, data.freshness);
   renderSafety(data.safety, data.freshness);
   renderPerformance(data.performance);
+  renderTimeBuckets(
+    data.time_bucket_performance || data.performance?.time_buckets,
+    data.performance?.time_bucket_summary
+  );
+  renderMicroCalibration(data.microstructure_calibration, data.performance?.microstructure);
   renderFreshness(data.freshness);
   renderBestCard("best-15m-detail", opps15[0], "KXBTC15M");
   renderBestCard("best-1h-detail", opps1h[0], "KXBTCD");

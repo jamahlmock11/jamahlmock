@@ -23,6 +23,8 @@ class ScanSnapshot:
     settlements: list[dict[str, Any]] = field(default_factory=list)
     calibration: list[dict[str, Any]] = field(default_factory=list)
     performance: dict[str, Any] = field(default_factory=dict)
+    microstructure_calibration: dict[str, Any] = field(default_factory=dict)
+    time_bucket_performance: list[dict[str, Any]] = field(default_factory=list)
     safety: dict[str, Any] = field(default_factory=dict)
     freshness: dict[str, Any] = field(default_factory=dict)
 
@@ -73,6 +75,8 @@ class ScanState:
             "settlements": snap.settlements,
             "calibration": snap.calibration,
             "performance": snap.performance,
+            "microstructure_calibration": snap.microstructure_calibration,
+            "time_bucket_performance": snap.time_bucket_performance,
             "safety": snap.safety,
             "freshness": freshness,
         }

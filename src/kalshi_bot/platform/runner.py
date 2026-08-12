@@ -11,6 +11,8 @@ from kalshi_bot.config import BotConfig, Rules15mConfig, Settings, kalshi_base_u
 from kalshi_bot.data.btc_data_engine import BtcDataEngine
 from kalshi_bot.data.kalshi_client import KalshiClient
 from kalshi_bot.data.kalshi_trade_tape import KalshiTradeTapeService
+from kalshi_bot.calibration.microstructure import MicrostructureCalibrator
+from kalshi_bot.calibration.time_bucket_analytics import SettledTrade, summarize_time_buckets, time_bucket_performance
 from kalshi_bot.database.decision_store import DecisionSnapshot, DecisionStore
 from kalshi_bot.execution.executor import Executor
 from kalshi_bot.execution.position_monitor import PositionMonitor
@@ -88,7 +90,8 @@ class ProductionPlatform:
             self.config.v6, client=self.client, rules=self.rules, btc_engine=self.btc_engine
         )
         self.trade_tape = KalshiTradeTapeService(self.client)
-        self.settlement = SettlementIngestor("data/settlement_pending.db")
+        self.micro_calibrator = MicrostructureCalibrator()
+        self.settlement = SettlementIngestor("data/settlement_pending.db", self.micro_calibrator)
         self.decisions = DecisionStore("data/decisions.db")
         self.risk = RiskManager(self.config)
         self.executor = Executor(self.client, self.config, self.risk)
@@ -271,16 +274,52 @@ class ProductionPlatform:
 
         spot = opps[0]["btc"] if opps else 0.0
         cal_records: list[tuple[float, bool]] = []
+        for row in self.settlement.settled_trades(limit=500):
+            cal_records.append((float(row["prediction"]), bool(row["won"])))
         for s in result.settlements:
             pred = s.get("prediction")
             won = s.get("won")
             if pred is not None and won is not None:
                 cal_records.append((float(pred), bool(won)))
-        calibration = calibration_table(cal_records) if cal_records else []
+        calibration = calibration_table(cal_records) if cal_records else self.settlement.calibration_summary(
+            self.engine.calibrator
+        )
 
+        settled = [
+            SettledTrade(
+                ticker=r["ticker"],
+                side=r["side"],
+                prediction=float(r["prediction"]),
+                won=bool(r["won"]),
+                pnl=float(r["pnl"] or 0),
+                net_edge=float(r["net_edge"] or 0),
+                seconds_to_expiry=float(r["seconds_to_expiry"] or 0),
+                confidence=float(r.get("confidence") or 0),
+            )
+            for r in self.settlement.settled_trades(limit=500)
+        ]
+        time_buckets = time_bucket_performance(
+            settled,
+            min_seconds=self.config.v6.min_seconds_to_expiry,
+            max_seconds=self.config.v6.max_seconds_to_expiry,
+        )
+        bucket_summary = summarize_time_buckets(time_buckets)
+        micro_report = self.micro_calibrator.report()
+
+        total_pnl = sum(t.pnl for t in settled)
+        wins = sum(1 for t in settled if t.won)
         perf = {
-            "KXBTC15M": {"trade_count": len(result.decisions_15m), "signals": {}},
+            "KXBTC15M": {
+                "trade_count": len(result.decisions_15m),
+                "signals": {},
+                "settled_trades": len(settled),
+                "win_rate": wins / len(settled) if settled else None,
+                "total_pnl": total_pnl,
+            },
             "KXBTCD": {"trade_count": len(result.decisions_1h), "signals": {}},
+            "time_buckets": time_buckets,
+            "time_bucket_summary": bucket_summary,
+            "microstructure": micro_report,
         }
         for label, rows in (("KXBTC15M", result.decisions_15m), ("KXBTCD", result.decisions_1h)):
             for d in rows:
@@ -312,6 +351,8 @@ class ProductionPlatform:
                 settlements=result.settlements,
                 calibration=calibration,
                 performance=perf,
+                microstructure_calibration=micro_report,
+                time_bucket_performance=time_buckets,
                 safety=result.status,
                 freshness=freshness,
             )
