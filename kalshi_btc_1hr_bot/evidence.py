@@ -93,6 +93,19 @@ def evaluate_edge_with_evidence(
             f"Crowd quorum {crowd.quorum_count}/{crowd.quorum_required} on {crowd.consensus_side.upper()}",
         )
 
+    if forecast is not None and not forecast.crowd.side_met(direction.side):
+        crowd = forecast.crowd
+        finish = "ABOVE" if direction.side == "yes" else "BELOW"
+        return TradeSignal(
+            False,
+            direction.side,
+            p_fair,
+            yes_ask if direction.side == "yes" else no_ask,
+            0.0,
+            0.0,
+            f"Crowd {finish} {crowd.side_pct(direction.side):.1f}% < {config.CROWD_MIN_FAVORITE * 100:.0f}%",
+        )
+
     if direction.margin < min_margin:
         return TradeSignal(
             False,

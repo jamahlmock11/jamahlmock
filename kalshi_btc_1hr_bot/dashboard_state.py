@@ -157,6 +157,16 @@ def build_checklist(
                 "crowd",
             ),
             CheckItem(
+                f"Crowd ≥ {config.CROWD_MIN_FAVORITE * 100:.0f}% on trade side",
+                best.forecast.crowd.side_met(best.direction.side),
+                (
+                    f"{best.direction.finish_label} "
+                    f"{best.forecast.crowd.side_pct(best.direction.side):.1f}% "
+                    f"(favorite {best.forecast.crowd.favorite_pct:.1f}%)"
+                ),
+                "crowd",
+            ),
+            CheckItem(
                 f"Ensemble agreement ≥ {config.ENSEMBLE_MIN_AGREEMENT:.0%}",
                 best.forecast.agreement_score >= config.ENSEMBLE_MIN_AGREEMENT,
                 f"{best.forecast.agreement_score:.0%}",
@@ -350,6 +360,7 @@ def build_snapshot(
             "fee_cents": cfg.edge.fee_per_contract_cents,
             "min_evidence_margin": config.MIN_EVIDENCE_MARGIN,
             "min_agreement": config.ENSEMBLE_MIN_AGREEMENT,
+            "min_favorite_pct": config.CROWD_MIN_FAVORITE * 100,
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,

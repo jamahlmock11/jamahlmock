@@ -44,6 +44,7 @@ ENSEMBLE_MIN_AGREEMENT = 0.55
 # Crowd forecast system
 CROWD_SYNTHESIS = "blend"  # weighted | median | trimmed | blend
 CROWD_MIN_QUORUM = 5
+CROWD_MIN_FAVORITE = 0.76  # crowd consensus must be ≥76% on chosen side (YES or NO)
 CROWD_USE_ADAPTIVE_WEIGHTS = True
 CROWD_PERFORMANCE_PATH = str(Path(__file__).resolve().parent / "data" / "crowd_performance.json")
 

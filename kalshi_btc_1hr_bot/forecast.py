@@ -52,6 +52,10 @@ class ForecastEnsembleOutput:
         return self.crowd.quorum_met
 
     @property
+    def favorite_met(self) -> bool:
+        return self.crowd.favorite_met
+
+    @property
     def crowd_summary(self) -> dict:
         return crowd_summary(self.crowd)
 
@@ -79,6 +83,8 @@ class ForecastEnsemble:
 
         if not crowd.quorum_met:
             confidence *= 0.65
+        if not crowd.favorite_met:
+            confidence *= 0.5
         if not state.is_official_brti:
             confidence *= config.PROXY_BRTI_CONFIDENCE_PENALTY
         if crowd.agreement_score < config.ENSEMBLE_MIN_AGREEMENT:

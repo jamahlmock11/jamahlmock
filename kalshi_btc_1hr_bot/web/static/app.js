@@ -122,7 +122,7 @@
 
     const th = snap.thresholds || {};
     $("thresholds-line").textContent =
-      "Edge ≥ " + (th.min_edge_cents || "?") + "¢ · Evidence ≥ " + (th.min_evidence_margin || "?") +
+      "Edge ≥ " + (th.min_edge_cents || "?") + "¢ · Crowd ≥ " + (th.min_favorite_pct || 76) + "% · Evidence ≥ " + (th.min_evidence_margin || "?") +
       " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Top " + (th.top_n_markets || 4) + " markets";
     $("updated-line").textContent = snap.updated_at ? "Updated " + snap.updated_at : "No scan yet";
   }
@@ -195,8 +195,9 @@
       summaryEl.innerHTML =
         '<div class="crowd-stat"><div class="k">Crowd P(YES)</div><div class="v">' +
         (crowd.prob_yes * 100).toFixed(1) + "%</div></div>" +
-        '<div class="crowd-stat"><div class="k">Consensus</div><div class="v ' + sideClass + '">' +
-        (crowd.finish || crowd.consensus) + "</div></div>" +
+        '<div class="crowd-stat"><div class="k">Favorite</div><div class="v ' + sideClass + '">' +
+        (crowd.favorite_pct != null ? crowd.favorite_pct.toFixed(1) + "%" : "—") +
+        (crowd.favorite_met === false ? " ✕" : crowd.favorite_met ? " ✓" : "") + "</div></div>" +
         '<div class="crowd-stat"><div class="k">Synthesis</div><div class="v">' + (crowd.synthesis || "—") + "</div></div>" +
         '<div class="crowd-stat"><div class="k">Agreement</div><div class="v">' +
         (crowd.agreement != null ? Math.round(crowd.agreement * 100) + "%" : "—") + "</div></div>" +

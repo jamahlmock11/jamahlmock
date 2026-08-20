@@ -68,6 +68,28 @@ class CrowdForecast:
     def finish_label(self) -> str:
         return "ABOVE" if self.consensus_side == "yes" else "BELOW"
 
+    @property
+    def favorite_prob(self) -> float:
+        """Crowd probability on the consensus side (either YES or NO)."""
+        return self.prob_yes if self.consensus_side == "yes" else self.prob_no
+
+    @property
+    def favorite_pct(self) -> float:
+        return self.favorite_prob * 100.0
+
+    @property
+    def favorite_met(self) -> bool:
+        return self.favorite_prob >= config.CROWD_MIN_FAVORITE
+
+    def side_prob(self, side: str) -> float:
+        return self.prob_yes if side == "yes" else self.prob_no
+
+    def side_pct(self, side: str) -> float:
+        return self.side_prob(side) * 100.0
+
+    def side_met(self, side: str) -> bool:
+        return self.side_prob(side) >= config.CROWD_MIN_FAVORITE
+
 
 class CrowdPerformanceTracker:
     """Track per-member Brier scores and adapt weights."""
@@ -281,10 +303,17 @@ class CrowdForecastSystem:
 
         disagreeing = tuple(m.name for m in members if m.side != consensus)
         top = _top_members(members, config.TOP_N_VOTES)
+        favorite_prob = prob_yes if consensus == "yes" else prob_no
+        if favorite_prob < config.CROWD_MIN_FAVORITE:
+            confidence *= favorite_prob / max(config.CROWD_MIN_FAVORITE, 0.01)
 
         notes: list[str] = []
         if not quorum_met:
             notes.append(f"Crowd quorum {quorum_count}/{quorum_required} on {consensus.upper()}")
+        if favorite_prob < config.CROWD_MIN_FAVORITE:
+            notes.append(
+                f"Crowd favorite {favorite_prob:.0%} < {config.CROWD_MIN_FAVORITE:.0%} on {consensus.upper()}"
+            )
         if agreement < config.ENSEMBLE_MIN_AGREEMENT:
             notes.append(f"Crowd disagreement ({agreement:.0%} agreement)")
         if not state.is_official_brti:
@@ -332,6 +361,9 @@ def crowd_summary(crowd: CrowdForecast) -> dict[str, Any]:
         "agreement": round(crowd.agreement_score, 3),
         "quorum": f"{crowd.quorum_count}/{crowd.quorum_required}",
         "quorum_met": crowd.quorum_met,
+        "favorite_pct": round(crowd.favorite_pct, 1),
+        "favorite_met": crowd.favorite_met,
+        "min_favorite_pct": round(config.CROWD_MIN_FAVORITE * 100, 0),
         "yes_votes": crowd.yes_votes,
         "no_votes": crowd.no_votes,
         "synthesis": crowd.synthesis,
