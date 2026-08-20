@@ -1,0 +1,46 @@
+# Kalshi BTC 1-Hour Bot — Cursor Context
+
+You are working on `kalshi_btc_1hr_bot/`, a Python framework for forecasting
+Kalshi KXBTCD hourly binary contracts on BTC BRTI settlement.
+
+## Market
+- Series: KXBTCD (hourly only, filter out daily buckets)
+- Window: 3600 seconds
+- Settlement: 60-second BRTI average at top of hour
+- Strike K = BRTI at window open
+
+## 5-Layer Model (model.py)
+1. GBM core with 60s averaging vol adjustment
+2. Multi-TF momentum (5m/15m/30m weighted blend)
+3. Funding rate signal (Binance perp)
+4. Mean reversion toward VWAP
+5. Volatility regime (low/med/high confidence weighting)
+Final: logistic calibration on 18 features
+
+## Trading Rules
+- min_edge: 2.5 cents (0.025)
+- Kelly: 20% fraction, 4% max bankroll per trade
+- Daily loss stop: 6%
+- Cycle: 5 seconds
+- Default: PAPER mode, NO TRADE when edge insufficient
+
+## Key Files
+- config.py — all tunable parameters
+- data_feed.py — Binance spot + funding + momentum/VWAP
+- model.py — 5-layer ensemble
+- edge.py — EV calculation with Kalshi fees
+- sizing.py — fractional Kelly
+- risk.py — bankroll caps, drawdown stop
+- backtest.py — synthetic backtest (no API keys)
+- bot.py — main paper/live loop
+
+## Commands
+- make setup && source .venv/bin/activate
+- make backtest (synthetic)
+- make paper-once (single cycle)
+- make paper (continuous)
+
+## Do NOT
+- Promise 75-80% win rates
+- Trade without clearing min_edge
+- Skip paper mode for initial testing

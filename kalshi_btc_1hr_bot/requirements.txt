@@ -1,0 +1,6 @@
+# Kalshi BTC 1-Hour Bot dependencies
+numpy>=1.26
+scipy>=1.11
+httpx>=0.27
+cryptography>=42.0
+python-dotenv>=1.0
