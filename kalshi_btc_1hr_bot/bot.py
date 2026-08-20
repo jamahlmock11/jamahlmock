@@ -7,8 +7,10 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from kalshi_btc_1hr_bot.config import BotConfig, load_config, require_live_credentials
+from kalshi_btc_1hr_bot.dashboard_state import build_snapshot, save_snapshot
 from kalshi_btc_1hr_bot.data_feed import DataFeed
 from kalshi_btc_1hr_bot.evidence import (
     MarketCandidate,
@@ -21,6 +23,7 @@ from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
+from kalshi_btc_1hr_bot.trade_journal import TradeJournal
 from kalshi_btc_1hr_bot.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,20 @@ class HourlyBot:
         self.feed = DataFeed(kalshi_client=self.client)
         self.ensemble = ForecastEnsemble()
         self.risk = RiskManager(self.config)
+        self.journal = TradeJournal()
+
+    def _balance_usd(self) -> float | None:
+        if not self.client.authenticated:
+            return None
+        try:
+            data = self.client.get_balance()
+            if data.get("balance_dollars") is not None:
+                return float(data["balance_dollars"])
+            if data.get("balance") is not None:
+                return float(data["balance"]) / 100.0
+        except Exception:
+            logger.debug("balance fetch failed", exc_info=True)
+        return None
 
     def close(self) -> None:
         self.client.close()
@@ -136,7 +153,21 @@ class HourlyBot:
                 )
                 if contracts > 0:
                     action = f"BUY_{cand.direction.side.upper()}"
-                    self._execute(cand.ticker, cand.direction.side, contracts, cand.edge.market_price)
+                    self._execute(
+                        cand.ticker,
+                        cand.direction.side,
+                        contracts,
+                        cand.edge.market_price,
+                        meta={
+                            "edge_cents": cand.edge.edge_cents,
+                            "evidence_score": cand.evidence_score,
+                            "p_fair": cand.forecast.p_fair,
+                            "confidence": cand.forecast.confidence,
+                            "strike": cand.strike,
+                            "spot": data.spot,
+                            "finish": cand.direction.finish_label,
+                        },
+                    )
 
             reason = cand.edge.reason
             if not is_pick and cand.edge.should_trade:
@@ -196,10 +227,85 @@ class HourlyBot:
         elif best is None:
             logger.info("NO TRADE — no candidate cleared edge + evidence from top %d", len(candidates))
 
+        self._publish_dashboard(
+            data=data,
+            candidates=candidates,
+            decisions=decisions,
+            best=best,
+            best_ticker=best_ticker,
+            markets_scanned=scanned,
+        )
+
         return decisions
 
-    def _execute(self, ticker: str, side: str, contracts: int, price: float) -> None:
+    def _publish_dashboard(
+        self,
+        *,
+        data: Any,
+        candidates: list[MarketCandidate],
+        decisions: list[dict],
+        best: MarketCandidate | None,
+        best_ticker: str | None,
+        markets_scanned: int,
+    ) -> None:
+        mode = "PAPER" if self.config.paper else "LIVE"
+        balance = self._balance_usd()
+        try:
+            settlements = self.journal.poll_settlements(self.client)
+        except Exception:
+            settlements = []
+
+        snapshot = build_snapshot(
+            cfg=self.config,
+            data=data,
+            candidates=candidates,
+            decisions=decisions,
+            best=best,
+            best_ticker=best_ticker,
+            risk=self.risk,
+            markets_scanned=markets_scanned,
+            balance_usd=balance,
+            mode=mode,
+            recent_settlements=settlements,
+        )
+        save_snapshot(snapshot)
+
+        selected = next((d for d in decisions if d.get("selected")), None)
+        best_dec = next((d for d in decisions if d.get("ticker") == best_ticker), None)
+        reason = ""
+        if selected:
+            reason = "Trade executed"
+        elif best_dec:
+            reason = str(best_dec.get("reason") or "")
+        elif best is None:
+            reason = "No market cleared edge + evidence"
+
+        self.journal.record_cycle(
+            mode=mode,
+            status=snapshot.cycle_status,
+            markets_scanned=markets_scanned,
+            candidates=len(candidates),
+            best_ticker=best_ticker or "",
+            best_action=str(best_dec.get("action") if best_dec else "NO_TRADE"),
+            reason=reason,
+            selected=bool(selected),
+            spot=float(data.spot),
+            readiness_pct=snapshot.readiness_pct,
+            payload={"blockers": snapshot.blockers, "best_pick": snapshot.best_pick},
+        )
+
+    def _execute(
+        self,
+        ticker: str,
+        side: str,
+        contracts: int,
+        price: float,
+        *,
+        meta: dict | None = None,
+    ) -> None:
         cost = contracts * price
+        mode = "PAPER" if self.config.paper else "LIVE"
+        meta = meta or {}
         if self.config.paper:
             logger.info(
                 "PAPER %s %s x%d @ %.0f¢ ($%.2f)",
@@ -210,6 +316,21 @@ class HourlyBot:
                 cost,
             )
             self.risk.register_trade(ticker, cost)
+            self.journal.record_trade(
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                entry_price=price,
+                mode=mode,
+                passed=True,
+                edge_cents=float(meta.get("edge_cents", 0)),
+                evidence_score=float(meta.get("evidence_score", 0)),
+                p_fair=float(meta.get("p_fair", 0)),
+                confidence=float(meta.get("confidence", 0)),
+                strike=float(meta.get("strike", 0)),
+                spot=float(meta.get("spot", 0)),
+                finish=str(meta.get("finish", "")),
+            )
             return
 
         try:
@@ -221,7 +342,26 @@ class HourlyBot:
                 count=contracts,
                 price_cents=price_cents,
             )
+            order_id = str(
+                resp.get("order", {}).get("order_id") or resp.get("order_id") or "ok"
+            )
             self.risk.register_trade(ticker, cost)
+            self.journal.record_trade(
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                entry_price=price,
+                mode=mode,
+                order_id=order_id,
+                passed=True,
+                edge_cents=float(meta.get("edge_cents", 0)),
+                evidence_score=float(meta.get("evidence_score", 0)),
+                p_fair=float(meta.get("p_fair", 0)),
+                confidence=float(meta.get("confidence", 0)),
+                strike=float(meta.get("strike", 0)),
+                spot=float(meta.get("spot", 0)),
+                finish=str(meta.get("finish", "")),
+            )
             logger.info(
                 "LIVE order placed: %s %s x%d @ %d¢ ($%.2f) order=%s",
                 side.upper(),
@@ -229,10 +369,26 @@ class HourlyBot:
                 contracts,
                 price_cents,
                 cost,
-                resp.get("order", {}).get("order_id") or resp.get("order_id") or "ok",
+                order_id,
             )
         except Exception:
             logger.exception("order failed for %s", ticker)
+            self.journal.record_trade(
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                entry_price=price,
+                mode=mode,
+                passed=False,
+                block_reason="order_failed",
+                edge_cents=float(meta.get("edge_cents", 0)),
+                evidence_score=float(meta.get("evidence_score", 0)),
+                p_fair=float(meta.get("p_fair", 0)),
+                confidence=float(meta.get("confidence", 0)),
+                strike=float(meta.get("strike", 0)),
+                spot=float(meta.get("spot", 0)),
+                finish=str(meta.get("finish", "")),
+            )
 
 
 def run_once(config: BotConfig | None = None) -> None:

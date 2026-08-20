@@ -1,9 +1,10 @@
-.PHONY: setup backtest paper paper-once test clean
+.PHONY: setup backtest paper paper-once test clean dashboard
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 export PYTHONPATH := $(abspath ..)
+DASHBOARD_PORT ?= 8090
 
 setup:
 	python3 -m venv $(VENV) || true
@@ -31,6 +32,9 @@ live-once:
 
 live-loop:
 	$(PYTHON) bot.py --live --max-trade-usd 1
+
+dashboard:
+	DASHBOARD_PORT=$(DASHBOARD_PORT) $(PYTHON) dashboard.py
 
 clean:
 	rm -rf $(VENV) __pycache__ */__pycache__
