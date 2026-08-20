@@ -26,8 +26,18 @@ def test_api_state_with_snapshot():
             opportunities=[
                 {
                     "ticker": "KXBTC15M-X",
+                    "strategy": "KXBTC15M",
                     "model_yes": 72.0,
                     "decision": "BUY YES",
+                    "gates": {
+                        "gates": [
+                            {"name": "Time to expiry", "status": "pass", "detail": "ok", "side": None}
+                        ],
+                        "ready_side": "YES",
+                        "position_detail": "YES x1",
+                        "crowd_yes_pct": 65.0,
+                        "crowd_direction": "UP",
+                    },
                 }
             ],
             calibration=[{"range": "70%-80%", "n_trades": 5, "empirical_win_rate": 0.8, "calibrated": True}],
@@ -39,5 +49,6 @@ def test_api_state_with_snapshot():
     assert data["status"] == "ok"
     assert data["spot"] == 65000.0
     assert len(data["opportunities"]) == 1
+    assert data["opportunities"][0]["gates"]["ready_side"] == "YES"
     assert data["calibration"][0]["n_trades"] == 5
     assert data["freshness"]["kalshi_ws_connected"] is True

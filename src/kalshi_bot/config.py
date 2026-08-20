@@ -159,6 +159,16 @@ class QualityRules15m(BaseModel):
     stale_data_stop_trading: bool = True
 
 
+class TradeGatesConfig(BaseModel):
+    """Dashboard gate thresholds for per-side trade readiness."""
+
+    min_minutes_to_expiry: float = 0.5
+    max_minutes_to_expiry: float = 12.0
+    uncertainty_cap: float = 0.10
+    yes_alignment_min_forecast: float = 0.50
+    no_alignment_min_crowd_pct: float = 0.52
+
+
 class V6Config(BaseModel):
     """Kalshi BTC 15-Min Intelligence V6 settings."""
 
@@ -209,6 +219,7 @@ class Rules15mConfig(BaseModel):
     )
     bot_action: BotActionConfig = Field(default_factory=BotActionConfig)
     quality: QualityRules15m = Field(default_factory=QualityRules15m)
+    gates: TradeGatesConfig = Field(default_factory=TradeGatesConfig)
     time_buckets: dict[str, dict] = Field(default_factory=dict)
 
 

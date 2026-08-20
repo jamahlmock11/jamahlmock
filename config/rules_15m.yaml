@@ -29,6 +29,14 @@ quality:
   min_pattern_examples: null
   stale_data_stop_trading: true
 
+# Per-side gate checklist (dashboard + trade readiness)
+gates:
+  min_minutes_to_expiry: 0.5
+  max_minutes_to_expiry: 12.0
+  uncertainty_cap: 0.10
+  yes_alignment_min_forecast: 0.50
+  no_alignment_min_crowd_pct: 0.52
+
 # Time-bucket edge floors (strategy tightens/loosens by minutes remaining)
 time_buckets:
   "15_10":

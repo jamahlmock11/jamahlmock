@@ -274,6 +274,8 @@ class ProductionPlatform:
                 "price_pattern": d.features.get("price_pattern"),
                 "yes_net_edge": d.features.get("yes_net_edge"),
                 "no_net_edge": d.features.get("no_net_edge"),
+                "gates": d.features.get("gates"),
+                "gates_ready_side": d.features.get("gates_ready_side"),
             }
 
         opps_15m = [_row(d) for d in result.decisions_15m]
