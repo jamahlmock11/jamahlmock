@@ -10,10 +10,10 @@ import numpy as np
 
 from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import MarketData, SyntheticPriceGenerator
-from kalshi_btc_1hr_bot.edge import TradeSide, evaluate_edge
+from kalshi_btc_1hr_bot.edge import evaluate_edge
 from kalshi_btc_1hr_bot.model import HourlyForecastModel
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
-from kalshi_btc_1hr_bot.utils import quadratic_fee, setup_logging
+from kalshi_btc_1hr_bot.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -117,17 +117,20 @@ def run_synthetic_backtest(
         market_no = float(np.clip(1.0 - market_yes + np.random.default_rng(seed + i + 1).normal(0, 0.02), 0.05, 0.95))
 
         edge = evaluate_edge(
-            p_fair=forecast.p_fair,
-            yes_ask=market_yes,
-            no_ask=market_no,
-            edge_cfg=cfg.edge,
+            forecast.p_fair,
+            market_yes,
+            market_no,
+            market_yes - 0.02,
+            market_no - 0.02,
+            fee_cents=cfg.edge.fee_per_contract_cents,
+            min_edge=cfg.edge.min_edge_cents,
         )
 
         if not edge.should_trade:
             spot0 = float(path[-1])
             continue
 
-        win_prob = forecast.p_fair if edge.side == TradeSide.YES else 1.0 - forecast.p_fair
+        win_prob = forecast.p_fair if edge.side == "yes" else 1.0 - forecast.p_fair
         contracts = kelly_contracts(
             win_prob=win_prob,
             price=edge.market_price,
@@ -138,10 +141,10 @@ def run_synthetic_backtest(
             spot0 = float(path[-1])
             continue
 
-        won = (edge.side == TradeSide.YES and settled_yes) or (
-            edge.side == TradeSide.NO and not settled_yes
+        won = (edge.side == "yes" and settled_yes) or (
+            edge.side == "no" and not settled_yes
         )
-        fee = quadratic_fee(edge.market_price, cfg.edge.fee_rate)
+        fee = cfg.edge.fee_per_contract_cents / 100.0
         if won:
             pnl = contracts * ((1.0 - edge.market_price) - fee)
         else:
@@ -150,10 +153,10 @@ def run_synthetic_backtest(
         report.trades.append(
             BacktestTrade(
                 market_idx=i,
-                side=edge.side.value,
+                side=edge.side,
                 price=edge.market_price,
                 p_fair=forecast.p_fair,
-                net_edge=edge.net_edge,
+                net_edge=edge.edge_cents / 100.0,
                 contracts=contracts,
                 settled_yes=settled_yes,
                 pnl=pnl,

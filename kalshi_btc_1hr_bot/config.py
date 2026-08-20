@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Edge thresholds — same structure as 15m bot (cents)
+MIN_EDGE_CENTS = 2.5
+FEE_PER_CONTRACT_CENTS = 1.75
+
 
 @dataclass
 class ModelConfig:
@@ -37,8 +41,8 @@ class ModelConfig:
 
 @dataclass
 class EdgeConfig:
-    min_edge: float = 0.025  # 2.5 cents
-    fee_rate: float = 0.07
+    min_edge_cents: float = MIN_EDGE_CENTS
+    fee_per_contract_cents: float = FEE_PER_CONTRACT_CENTS
 
 
 @dataclass

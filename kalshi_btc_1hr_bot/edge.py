@@ -1,66 +1,78 @@
-"""Expected value and edge calculation."""
+"""Edge calculation — identical structure to 15m bot.
+
+Compares fair probability to Kalshi implied price; trades only when EV > threshold.
+"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from enum import Enum
 
-from kalshi_btc_1hr_bot.config import EdgeConfig
-from kalshi_btc_1hr_bot.utils import quadratic_fee
+from kalshi_btc_1hr_bot import config
 
-
-class TradeSide(str, Enum):
-    YES = "yes"
-    NO = "no"
-    NONE = "none"
+log = logging.getLogger("edge")
 
 
 @dataclass
-class EdgeResult:
-    side: TradeSide
-    market_price: float
-    p_fair: float
-    raw_edge: float
-    net_edge: float
-    ev_per_contract: float
+class TradeSignal:
     should_trade: bool
+    side: str  # "yes" or "no"
+    p_fair: float
+    market_price: float  # Kalshi ask for chosen side (decimal 0-1)
+    edge_cents: float
+    ev_per_contract: float
     reason: str
 
 
 def evaluate_edge(
-    *,
     p_fair: float,
-    yes_ask: float | None,
-    no_ask: float | None,
-    yes_bid: float | None = None,
-    no_bid: float | None = None,
-    edge_cfg: EdgeConfig | None = None,
-) -> EdgeResult:
-    """Evaluate YES and NO sides; return best actionable edge."""
-    cfg = edge_cfg or EdgeConfig()
-    best = EdgeResult(TradeSide.NONE, 0.0, p_fair, 0.0, 0.0, 0.0, False, "no quotes")
+    yes_ask: float,
+    no_ask: float,
+    yes_bid: float,
+    no_bid: float,
+    fee_cents: float = config.FEE_PER_CONTRACT_CENTS,
+    min_edge: float = config.MIN_EDGE_CENTS,
+) -> TradeSignal:
+    ev_yes_dollars = p_fair * 1.0 - yes_ask
+    edge_yes_cents = ev_yes_dollars * 100 - fee_cents
 
-    candidates: list[tuple[TradeSide, float]] = []
-    if yes_ask is not None and 0 < yes_ask < 1:
-        candidates.append((TradeSide.YES, yes_ask))
-    if no_ask is not None and 0 < no_ask < 1:
-        candidates.append((TradeSide.NO, no_ask))
+    p_no_fair = 1.0 - p_fair
+    ev_no_dollars = p_no_fair * 1.0 - no_ask
+    edge_no_cents = ev_no_dollars * 100 - fee_cents
 
-    for side, price in candidates:
-        if side == TradeSide.YES:
-            raw = p_fair - price
-            win_prob = p_fair
-        else:
-            raw = (1.0 - p_fair) - price
-            win_prob = 1.0 - p_fair
+    if edge_yes_cents >= edge_no_cents:
+        best_side, best_edge, best_price, best_ev = "yes", edge_yes_cents, yes_ask, ev_yes_dollars
+    else:
+        best_side, best_edge, best_price, best_ev = "no", edge_no_cents, no_ask, ev_no_dollars
 
-        fee = quadratic_fee(price, cfg.fee_rate)
-        net = raw - fee
-        ev = win_prob * (1.0 - price) - (1.0 - win_prob) * price - fee
+    if best_edge < min_edge:
+        return TradeSignal(
+            False,
+            best_side,
+            p_fair,
+            best_price,
+            best_edge,
+            best_ev,
+            f"Edge {best_edge:.1f}c < min {min_edge:.1f}c",
+        )
 
-        if net > best.net_edge:
-            should = net >= cfg.min_edge
-            reason = f"net_edge={net*100:.2f}¢" + ("" if should else f" < min {cfg.min_edge*100:.1f}¢")
-            best = EdgeResult(side, price, p_fair, raw, net, ev, should, reason)
+    return TradeSignal(
+        True,
+        best_side,
+        p_fair,
+        best_price,
+        best_edge,
+        best_ev,
+        f"Edge {best_edge:.1f}c on {best_side.upper()} @ {best_price:.2f} fair={p_fair:.3f}",
+    )
 
-    return best
+
+def vwap_fill_price(book_side: list[tuple[float, float]], quantity: int) -> float:
+    filled, total_cost = 0, 0.0
+    for price, size in book_side:
+        if filled >= quantity:
+            break
+        take = min(size, quantity - filled)
+        total_cost += price * take
+        filled += take
+    return total_cost / filled if filled > 0 else 0.0

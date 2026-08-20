@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
-import pytest
 
-from kalshi_btc_1hr_bot.config import BotConfig, EdgeConfig
+from kalshi_btc_1hr_bot.config import BotConfig
 from kalshi_btc_1hr_bot.data_feed import MarketData, SyntheticPriceGenerator
-from kalshi_btc_1hr_bot.edge import TradeSide, evaluate_edge
+from kalshi_btc_1hr_bot.edge import evaluate_edge, vwap_fill_price
 from kalshi_btc_1hr_bot.model import HourlyForecastModel
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import gbm_prob_above, quadratic_fee
@@ -57,10 +54,12 @@ def test_edge_calculation():
         p_fair=0.65,
         yes_ask=0.40,
         no_ask=0.65,
-        edge_cfg=EdgeConfig(min_edge=0.025),
+        yes_bid=0.38,
+        no_bid=0.63,
+        min_edge=2.5,
     )
-    assert edge.side == TradeSide.YES
-    assert edge.net_edge > 0
+    assert edge.side == "yes"
+    assert edge.edge_cents > 0
     assert edge.should_trade
 
 
@@ -69,9 +68,18 @@ def test_edge_below_threshold():
         p_fair=0.55,
         yes_ask=0.52,
         no_ask=0.52,
-        edge_cfg=EdgeConfig(min_edge=0.025),
+        yes_bid=0.50,
+        no_bid=0.50,
+        min_edge=2.5,
     )
     assert not edge.should_trade
+
+
+def test_vwap_fill_price():
+    book = [(0.40, 10), (0.42, 20), (0.45, 30)]
+    px = vwap_fill_price(book, 25)
+    expected = (0.40 * 10 + 0.42 * 15) / 25
+    assert abs(px - expected) < 1e-9
 
 
 def test_kelly_sizing():

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import DataFeed
-from kalshi_btc_1hr_bot.edge import TradeSide, evaluate_edge
+from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.model import HourlyForecastModel
 from kalshi_btc_1hr_bot.risk import RiskManager
@@ -69,17 +69,23 @@ class HourlyBot:
                     data=data,
                 )
 
+                yes_ask_f = float(yes_ask) if yes_ask is not None else 1.0
+                no_ask_f = float(no_ask) if no_ask is not None else 1.0
+                yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
+                no_bid_f = float(market.get("no_bid") or no_ask_f)
+
                 edge = evaluate_edge(
-                    p_fair=forecast.p_fair,
-                    yes_ask=yes_ask,
-                    no_ask=no_ask,
-                    yes_bid=market.get("yes_bid"),
-                    no_bid=market.get("no_bid"),
-                    edge_cfg=self.config.edge,
+                    forecast.p_fair,
+                    yes_ask_f,
+                    no_ask_f,
+                    yes_bid_f,
+                    no_bid_f,
+                    fee_cents=self.config.edge.fee_per_contract_cents,
+                    min_edge=self.config.edge.min_edge_cents,
                 )
 
                 allowed, block_reason = self.risk.allow_trade(ticker=ticker, seconds_to_expiry=secs)
-                win_prob = forecast.p_fair if edge.side == TradeSide.YES else 1.0 - forecast.p_fair
+                win_prob = forecast.p_fair if edge.side == "yes" else 1.0 - forecast.p_fair
                 contracts = 0
                 if edge.should_trade and allowed:
                     contracts = kelly_contracts(
@@ -91,7 +97,7 @@ class HourlyBot:
 
                 action = "NO_TRADE"
                 if edge.should_trade and allowed and contracts > 0:
-                    action = f"BUY_{edge.side.value.upper()}"
+                    action = f"BUY_{edge.side.upper()}"
                     self._execute(ticker, edge.side, contracts, edge.market_price)
 
                 decision = {
@@ -103,8 +109,8 @@ class HourlyBot:
                     "spot": data.spot,
                     "strike": strike,
                     "secs_left": secs,
-                    "edge": edge.net_edge,
-                    "side": edge.side.value,
+                    "edge": edge.edge_cents / 100.0,
+                    "side": edge.side,
                     "price": edge.market_price,
                     "contracts": contracts,
                     "reason": edge.reason if edge.should_trade else block_reason,
@@ -117,7 +123,7 @@ class HourlyBot:
                     action,
                     ticker,
                     forecast.p_fair * 100,
-                    edge.net_edge * 100,
+                    edge.edge_cents,
                     forecast.confidence * 100,
                     forecast.vol_regime,
                     secs,
@@ -133,12 +139,12 @@ class HourlyBot:
             )
         return decisions
 
-    def _execute(self, ticker: str, side: TradeSide, contracts: int, price: float) -> None:
+    def _execute(self, ticker: str, side: str, contracts: int, price: float) -> None:
         cost = contracts * price
         if self.config.paper:
             logger.info(
                 "PAPER %s %s x%d @ %.0f¢ ($%.2f)",
-                side.value.upper(),
+                side.upper(),
                 ticker,
                 contracts,
                 price * 100,
@@ -151,13 +157,13 @@ class HourlyBot:
             price_cents = int(round(price * 100))
             self.client.place_order(
                 ticker=ticker,
-                side=side.value,
+                side=side,
                 action="buy",
                 count=contracts,
                 price_cents=price_cents,
             )
             self.risk.register_trade(ticker, cost)
-            logger.info("LIVE order placed: %s %s x%d", side.value.upper(), ticker, contracts)
+            logger.info("LIVE order placed: %s %s x%d", side.upper(), ticker, contracts)
         except Exception:
             logger.exception("order failed for %s", ticker)
 

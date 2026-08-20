@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from kalshi_btc_1hr_bot.config import SizingConfig
-from kalshi_btc_1hr_bot.edge import TradeSide
 
 
 def kelly_contracts(
