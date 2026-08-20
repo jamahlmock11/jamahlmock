@@ -12,6 +12,7 @@ from typing import Any
 from kalshi_btc_1hr_bot.config import BotConfig, load_config, require_live_credentials
 from kalshi_btc_1hr_bot.dashboard_state import build_snapshot, save_snapshot
 from kalshi_btc_1hr_bot.data_feed import DataFeed
+from kalshi_btc_1hr_bot.dynamic_gates import resolve_dynamic_thresholds
 from kalshi_btc_1hr_bot.evidence import (
     MarketCandidate,
     directional_evidence,
@@ -102,6 +103,13 @@ class HourlyBot:
                 yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
                 no_bid_f = float(market.get("no_bid") or no_ask_f)
 
+                thresholds = resolve_dynamic_thresholds(
+                    secs,
+                    vol_regime=forecast.vol_regime,
+                    agreement_score=forecast.agreement_score,
+                    crowd_side_prob=forecast.crowd.side_prob(direction.side),
+                )
+
                 edge = evaluate_edge_with_evidence(
                     forecast.p_fair,
                     yes_ask_f,
@@ -110,7 +118,7 @@ class HourlyBot:
                     no_bid_f,
                     direction,
                     fee_cents=self.config.edge.fee_per_contract_cents,
-                    min_edge=self.config.edge.min_edge_cents,
+                    thresholds=thresholds,
                     forecast=forecast,
                 )
 
@@ -124,6 +132,7 @@ class HourlyBot:
                         edge=edge,
                         evidence_score=evidence_score(direction, forecast),
                         market=market,
+                        thresholds=thresholds,
                     )
                 )
         except Exception:
@@ -203,7 +212,9 @@ class HourlyBot:
                 "agreement": cand.forecast.agreement_score,
                 "brti_official": cand.forecast.is_official_brti,
                 "brti_source": data.source,
-                "crowd": cand.forecast.crowd_summary,
+                "crowd": cand.forecast.crowd_summary(
+                    min_favorite=cand.thresholds.min_crowd_favorite if cand.thresholds else None
+                ),
                 "quorum_met": cand.forecast.quorum_met,
             }
             decisions.append(decision)

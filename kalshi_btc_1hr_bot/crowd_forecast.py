@@ -81,14 +81,18 @@ class CrowdForecast:
     def favorite_met(self) -> bool:
         return self.favorite_prob >= config.CROWD_MIN_FAVORITE
 
+    def favorite_met_at(self, min_favorite: float) -> bool:
+        return self.favorite_prob >= min_favorite
+
     def side_prob(self, side: str) -> float:
         return self.prob_yes if side == "yes" else self.prob_no
 
     def side_pct(self, side: str) -> float:
         return self.side_prob(side) * 100.0
 
-    def side_met(self, side: str) -> bool:
-        return self.side_prob(side) >= config.CROWD_MIN_FAVORITE
+    def side_met(self, side: str, *, min_favorite: float | None = None) -> bool:
+        floor = config.CROWD_MIN_FAVORITE if min_favorite is None else min_favorite
+        return self.side_prob(side) >= floor
 
 
 class CrowdPerformanceTracker:
@@ -351,8 +355,9 @@ class CrowdForecastSystem:
             self.tracker.record(m.name, m.prob_yes, outcome_yes)
 
 
-def crowd_summary(crowd: CrowdForecast) -> dict[str, Any]:
+def crowd_summary(crowd: CrowdForecast, *, min_favorite: float | None = None) -> dict[str, Any]:
     """JSON-serializable crowd snapshot for dashboard."""
+    fav_floor = config.CROWD_MIN_FAVORITE if min_favorite is None else min_favorite
     return {
         "prob_yes": round(crowd.prob_yes, 4),
         "consensus": crowd.consensus_side.upper(),
@@ -362,8 +367,8 @@ def crowd_summary(crowd: CrowdForecast) -> dict[str, Any]:
         "quorum": f"{crowd.quorum_count}/{crowd.quorum_required}",
         "quorum_met": crowd.quorum_met,
         "favorite_pct": round(crowd.favorite_pct, 1),
-        "favorite_met": crowd.favorite_met,
-        "min_favorite_pct": round(config.CROWD_MIN_FAVORITE * 100, 0),
+        "favorite_met": crowd.favorite_met_at(fav_floor),
+        "min_favorite_pct": round(fav_floor * 100, 1),
         "yes_votes": crowd.yes_votes,
         "no_votes": crowd.no_votes,
         "synthesis": crowd.synthesis,

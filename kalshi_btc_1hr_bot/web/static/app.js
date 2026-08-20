@@ -121,8 +121,17 @@
     cycleEl.className = "cycle-badge" + (cs === "TRADE" || cs === "READY" ? " trade" : cs === "CLOSE" ? " close" : "");
 
     const th = snap.thresholds || {};
+    const crowdRange = th.crowd_favorite_range_pct;
+    const edgeRange = th.min_edge_range;
+    const crowdTxt = crowdRange
+      ? (th.min_favorite_pct || "?") + "% (" + crowdRange[0] + "–" + crowdRange[1] + "%)"
+      : (th.min_favorite_pct || 76) + "%";
+    const edgeTxt = edgeRange
+      ? (th.min_edge_cents || "?") + "¢ (" + edgeRange[0] + "–" + edgeRange[1] + "¢)"
+      : (th.min_edge_cents || "?") + "¢";
     $("thresholds-line").textContent =
-      "Edge ≥ " + (th.min_edge_cents || "?") + "¢ · Crowd ≥ " + (th.min_favorite_pct || 76) + "% · Evidence ≥ " + (th.min_evidence_margin || "?") +
+      (th.bucket_label ? th.bucket_label + " · " : "") +
+      "Edge ≥ " + edgeTxt + " · Crowd ≥ " + crowdTxt + " · Evidence ≥ " + (th.min_evidence_margin || "?") +
       " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Top " + (th.top_n_markets || 4) + " markets";
     $("updated-line").textContent = snap.updated_at ? "Updated " + snap.updated_at : "No scan yet";
   }

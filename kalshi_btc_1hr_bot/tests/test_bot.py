@@ -116,9 +116,9 @@ def test_directional_evidence_picks_below():
     assert d.below_score > d.above_score
 
 
-def test_crowd_favorite_gate_blocks_below_76():
-    from kalshi_btc_1hr_bot.config import CROWD_MIN_FAVORITE
+def test_crowd_favorite_gate_blocks_below_dynamic_floor():
     from kalshi_btc_1hr_bot.crowd_forecast import CrowdForecast, CrowdMember
+    from kalshi_btc_1hr_bot.dynamic_gates import resolve_dynamic_thresholds
 
     members = tuple(
         CrowdMember("m", 0.60, 1.0, 0.9, "model") for _ in range(8)
@@ -140,10 +140,9 @@ def test_crowd_favorite_gate_blocks_below_76():
         top_votes=members[:4],
         disagreeing=(),
     )
-    assert not crowd.favorite_met
-    assert not crowd.side_met("yes")
+    th = resolve_dynamic_thresholds(1800, vol_regime="med", agreement_score=0.8, crowd_side_prob=0.60)
+    assert not crowd.side_met("yes", min_favorite=th.min_crowd_favorite)
     assert crowd.side_pct("yes") == 60.0
-    assert CROWD_MIN_FAVORITE == 0.76
 
     votes = [ModelVote("m", 0.60, 0.5, 0.9)]
     direction = directional_evidence(votes, n=1)
@@ -156,10 +155,10 @@ def test_crowd_favorite_gate_blocks_below_76():
     ens = EnsembleResult(0.6, 0.4, 0.7, 0.2, 0.8, tuple(votes))
     forecast = ForecastEnsembleOutput(0.6, 0.7, 0.8, 0.2, mo, ens, crowd, True)
     edge = evaluate_edge_with_evidence(
-        0.6, 0.40, 0.65, 0.38, 0.63, direction, min_edge=2.5, min_evidence_margin=0.01, forecast=forecast
+        0.6, 0.40, 0.65, 0.38, 0.63, direction, thresholds=th, forecast=forecast
     )
     assert not edge.should_trade
-    assert "76" in edge.reason or "Crowd" in edge.reason
+    assert "Crowd" in edge.reason
 
 
 def test_evaluate_edge_with_evidence():

@@ -59,6 +59,9 @@ class ForecastEnsembleOutput:
     def crowd_summary(self) -> dict:
         return crowd_summary(self.crowd)
 
+    def crowd_summary_at(self, min_favorite: float | None = None) -> dict:
+        return crowd_summary(self.crowd, min_favorite=min_favorite)
+
 
 class ForecastEnsemble:
     """5-layer model + crowd forecast system."""

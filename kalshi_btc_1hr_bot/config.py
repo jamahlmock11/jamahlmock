@@ -6,9 +6,11 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Edge thresholds — same structure as 15m bot (cents)
+# Edge thresholds — static fallbacks; bot uses dynamic_gates.resolve_dynamic_thresholds()
 MIN_EDGE_CENTS = 2.5
 FEE_PER_CONTRACT_CENTS = 1.75
+DYNAMIC_GATES_ENABLED = True
+RISK_MIN_SECONDS = 120.0
 
 # Model / market constants
 WINDOW_SECONDS = 3600
@@ -43,8 +45,8 @@ ENSEMBLE_MIN_AGREEMENT = 0.55
 
 # Crowd forecast system
 CROWD_SYNTHESIS = "blend"  # weighted | median | trimmed | blend
-CROWD_MIN_QUORUM = 5
-CROWD_MIN_FAVORITE = 0.76  # crowd consensus must be ≥76% on chosen side (YES or NO)
+CROWD_MIN_QUORUM = 5  # base quorum; dynamic gates use 4–6 by time bucket
+CROWD_MIN_FAVORITE = 0.76  # legacy ceiling; dynamic floor typically 60–78% by bucket
 CROWD_USE_ADAPTIVE_WEIGHTS = True
 CROWD_PERFORMANCE_PATH = str(Path(__file__).resolve().parent / "data" / "crowd_performance.json")
 

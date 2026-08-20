@@ -11,6 +11,7 @@ from typing import Any
 
 from kalshi_btc_1hr_bot import config
 from kalshi_btc_1hr_bot.config import BotConfig, ROOT
+from kalshi_btc_1hr_bot.dynamic_gates import DynamicThresholds, resolve_dynamic_thresholds
 from kalshi_btc_1hr_bot.evidence import MarketCandidate
 from kalshi_btc_1hr_bot.risk import RiskManager
 
@@ -106,6 +107,7 @@ def build_checklist(
     block_reason: str,
     contracts: int,
     cfg: BotConfig,
+    thresholds: DynamicThresholds | None = None,
 ) -> list[CheckItem]:
     items: list[CheckItem] = [
         CheckItem("BRTI spot feed live", data_ok, "CF Benchmarks / fallback", "data"),
@@ -133,32 +135,47 @@ def build_checklist(
         )
         return items
 
+    th = thresholds or best.thresholds
+    if th is None:
+        th = resolve_dynamic_thresholds(
+            best.secs_left,
+            vol_regime=best.forecast.vol_regime,
+            agreement_score=best.forecast.agreement_score,
+            edge_cents=best.edge.edge_cents,
+            crowd_side_prob=best.forecast.crowd.side_prob(best.direction.side),
+        )
+
+    cf_rng = th.crowd_favorite_range
+    ev_rng = th.evidence_margin_range
+    edge_rng = th.min_edge_range
+    ag_rng = th.agreement_range
+
     items.extend(
         [
             CheckItem(
-                f"Evidence margin ≥ {config.MIN_EVIDENCE_MARGIN:.3f}",
-                best.direction.margin >= config.MIN_EVIDENCE_MARGIN,
-                f"{best.direction.margin:.3f} ({best.direction.finish_label})",
+                f"Evidence margin ≥ {th.min_evidence_margin:.3f} ({ev_rng[0]:.3f}–{ev_rng[1]:.3f})",
+                best.direction.margin >= th.min_evidence_margin,
+                f"{best.direction.margin:.3f} ({best.direction.finish_label}) · {th.bucket_label}",
                 "evidence",
             ),
             CheckItem(
-                f"Net edge ≥ {cfg.edge.min_edge_cents:.1f}¢",
-                best.edge.should_trade or best.edge.edge_cents >= cfg.edge.min_edge_cents,
+                f"Net edge ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
+                best.edge.should_trade or best.edge.edge_cents >= th.min_edge_cents,
                 f"{best.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee",
                 "edge",
             ),
             CheckItem(
-                f"Crowd quorum ≥ {config.CROWD_MIN_QUORUM}",
-                best.forecast.quorum_met,
+                f"Crowd quorum ≥ {th.min_quorum}",
+                best.forecast.crowd.quorum_count >= th.min_quorum,
                 (
-                    f"{best.forecast.crowd.quorum_count}/{best.forecast.crowd.quorum_required} "
+                    f"{best.forecast.crowd.quorum_count}/{th.min_quorum} "
                     f"on {best.forecast.crowd.consensus_side.upper()}"
                 ),
                 "crowd",
             ),
             CheckItem(
-                f"Crowd ≥ {config.CROWD_MIN_FAVORITE * 100:.0f}% on trade side",
-                best.forecast.crowd.side_met(best.direction.side),
+                f"Crowd ≥ {th.min_crowd_favorite_pct:.0f}% ({cf_rng[0]*100:.0f}–{cf_rng[1]*100:.0f}%)",
+                best.forecast.crowd.side_met(best.direction.side, min_favorite=th.min_crowd_favorite),
                 (
                     f"{best.direction.finish_label} "
                     f"{best.forecast.crowd.side_pct(best.direction.side):.1f}% "
@@ -167,8 +184,8 @@ def build_checklist(
                 "crowd",
             ),
             CheckItem(
-                f"Ensemble agreement ≥ {config.ENSEMBLE_MIN_AGREEMENT:.0%}",
-                best.forecast.agreement_score >= config.ENSEMBLE_MIN_AGREEMENT,
+                f"Ensemble agreement ≥ {th.min_agreement:.0%} ({ag_rng[0]:.0%}–{ag_rng[1]:.0%})",
+                best.forecast.agreement_score >= th.min_agreement,
                 f"{best.forecast.agreement_score:.0%}",
                 "model",
             ),
@@ -218,6 +235,22 @@ def build_snapshot(
             contracts = int(best_decision.get("contracts") or 0)
             action = str(best_decision.get("action") or "NO_TRADE")
 
+    # Top 4 by edge — always show prices even when below threshold
+    top_by_edge = sorted(candidates, key=lambda c: c.edge.edge_cents, reverse=True)[
+        : config.TOP_N_MARKETS
+    ]
+
+    focus = best or (top_by_edge[0] if top_by_edge else None)
+    focus_th = None
+    if focus is not None:
+        focus_th = focus.thresholds or resolve_dynamic_thresholds(
+            focus.secs_left,
+            vol_regime=focus.forecast.vol_regime,
+            agreement_score=focus.forecast.agreement_score,
+            edge_cents=focus.edge.edge_cents,
+            crowd_side_prob=focus.forecast.crowd.side_prob(focus.direction.side),
+        )
+
     checklist = build_checklist(
         data_ok=data.spot > 0,
         brti_official=bool(getattr(data, "is_official", False)),
@@ -228,6 +261,7 @@ def build_snapshot(
         block_reason=block_reason,
         contracts=contracts,
         cfg=cfg,
+        thresholds=focus_th,
     )
     passed = sum(1 for c in checklist if c.passed)
     readiness = round(100.0 * passed / len(checklist), 1) if checklist else 0.0
@@ -236,10 +270,6 @@ def build_snapshot(
     if best and not best.edge.should_trade:
         blockers.insert(0, best.edge.reason)
 
-    # Top 4 by edge — always show prices even when below threshold
-    top_by_edge = sorted(candidates, key=lambda c: c.edge.edge_cents, reverse=True)[
-        : config.TOP_N_MARKETS
-    ]
     top_rows: list[dict[str, Any]] = []
     for i, cand in enumerate(top_by_edge, start=1):
         dec = next((d for d in decisions if d["ticker"] == cand.ticker), {})
@@ -253,11 +283,11 @@ def build_snapshot(
             )
         )
 
-    # Best focus = evidence pick, or highest-edge candidate for display
-    focus = best or (top_by_edge[0] if top_by_edge else None)
     crowd_data: dict[str, Any] = {}
     if focus is not None:
-        crowd_data = focus.forecast.crowd_summary
+        crowd_data = focus.forecast.crowd_summary_at(
+            min_favorite=focus_th.min_crowd_favorite if focus_th else None
+        )
     if focus is not None:
         dec = best_decision or {}
         best_pick = _candidate_row(
@@ -273,7 +303,7 @@ def build_snapshot(
         best_pick = None
 
     # Traffic-light status for top banner
-    min_edge = cfg.edge.min_edge_cents
+    min_edge = focus_th.min_edge_cents if focus_th else cfg.edge.min_edge_cents
     top_edge = top_by_edge[0].edge.edge_cents if top_by_edge else -999.0
     close_to_edge = top_edge >= (min_edge - 1.0)
 
@@ -356,11 +386,24 @@ def build_snapshot(
             "traded_tickers": sorted(risk.state.traded_tickers),
         },
         thresholds={
-            "min_edge_cents": cfg.edge.min_edge_cents,
+            "min_edge_cents": focus_th.min_edge_cents if focus_th else cfg.edge.min_edge_cents,
+            "min_edge_range": list(focus_th.min_edge_range) if focus_th else None,
             "fee_cents": cfg.edge.fee_per_contract_cents,
-            "min_evidence_margin": config.MIN_EVIDENCE_MARGIN,
-            "min_agreement": config.ENSEMBLE_MIN_AGREEMENT,
-            "min_favorite_pct": config.CROWD_MIN_FAVORITE * 100,
+            "min_evidence_margin": focus_th.min_evidence_margin if focus_th else config.MIN_EVIDENCE_MARGIN,
+            "evidence_margin_range": list(focus_th.evidence_margin_range) if focus_th else None,
+            "min_agreement": focus_th.min_agreement if focus_th else config.ENSEMBLE_MIN_AGREEMENT,
+            "agreement_range_pct": [round(r * 100, 1) for r in focus_th.agreement_range]
+            if focus_th
+            else None,
+            "min_favorite_pct": focus_th.min_crowd_favorite_pct if focus_th else config.CROWD_MIN_FAVORITE * 100,
+            "crowd_favorite_range_pct": [round(r * 100, 1) for r in focus_th.crowd_favorite_range]
+            if focus_th
+            else None,
+            "min_quorum": focus_th.min_quorum if focus_th else config.CROWD_MIN_QUORUM,
+            "quorum_range": list(focus_th.quorum_range) if focus_th else None,
+            "bucket": focus_th.bucket.value if focus_th else None,
+            "bucket_label": focus_th.bucket_label if focus_th else None,
+            "dynamic_gates": True,
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,
