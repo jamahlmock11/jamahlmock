@@ -93,7 +93,7 @@ class RiskConfig:
 class BotConfig:
     series_ticker: str = "KXBTCD"
     window_seconds: int = WINDOW_SECONDS
-    cycle_seconds: float = 5.0
+    cycle_seconds: float = 2.0
     paper: bool = True
 
     model: ModelConfig = field(default_factory=ModelConfig)

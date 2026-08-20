@@ -39,6 +39,9 @@ class DashboardSnapshot:
     markets_scanned: int = 0
     candidates: int = 0
     cycle_status: str = "WAITING"
+    action_light: str = "red"  # green | yellow | red
+    action_headline: str = "WAITING FOR SCAN"
+    action_detail: str = ""
     readiness_pct: float = 0.0
     checklist: list[dict[str, Any]] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -79,6 +82,9 @@ def _candidate_row(cand: MarketCandidate, *, rank: int, is_pick: bool, action: s
         "yes_bid": market.get("yes_bid"),
         "no_bid": market.get("no_bid"),
         "price": cand.edge.market_price,
+        "yes_price_cents": round((market.get("yes_ask") or 0) * 100),
+        "no_price_cents": round((market.get("no_ask") or 0) * 100),
+        "buy_price_cents": round(cand.edge.market_price * 100),
         "should_trade": cand.edge.should_trade,
         "is_pick": is_pick,
         "action": action,
@@ -210,13 +216,12 @@ def build_snapshot(
     if best and not best.edge.should_trade:
         blockers.insert(0, best.edge.reason)
 
-    tradeable = sorted(
-        [c for c in candidates if c.edge.should_trade],
-        key=lambda c: c.edge.edge_cents,
-        reverse=True,
-    )[: config.TOP_N_MARKETS]
+    # Top 4 by edge — always show prices even when below threshold
+    top_by_edge = sorted(candidates, key=lambda c: c.edge.edge_cents, reverse=True)[
+        : config.TOP_N_MARKETS
+    ]
     top_rows: list[dict[str, Any]] = []
-    for i, cand in enumerate(tradeable, start=1):
+    for i, cand in enumerate(top_by_edge, start=1):
         dec = next((d for d in decisions if d["ticker"] == cand.ticker), {})
         top_rows.append(
             _candidate_row(
@@ -228,8 +233,8 @@ def build_snapshot(
             )
         )
 
-    best_pick = None
-    focus = best or (candidates[0] if candidates else None)
+    # Best focus = evidence pick, or highest-edge candidate for display
+    focus = best or (top_by_edge[0] if top_by_edge else None)
     if focus is not None:
         dec = best_decision or {}
         best_pick = _candidate_row(
@@ -241,21 +246,50 @@ def build_snapshot(
         )
         best_pick["selected"] = bool(selected)
         best_pick["contracts"] = contracts
+    else:
+        best_pick = None
 
-    votes: list[dict[str, Any]] = []
-    if focus is not None:
-        for v in focus.direction.top_votes:
-            votes.append(
-                {
-                    "name": v.name,
-                    "prob_yes": round(v.prob_yes, 4),
-                    "weight": round(v.weight, 3),
-                    "confidence": round(v.confidence, 3),
-                    "side": "ABOVE" if v.prob_yes >= 0.5 else "BELOW",
-                }
-            )
+    # Traffic-light status for top banner
+    min_edge = cfg.edge.min_edge_cents
+    top_edge = top_by_edge[0].edge.edge_cents if top_by_edge else -999.0
+    close_to_edge = top_edge >= (min_edge - 1.0)
 
-    cycle_status = "TRADE" if selected else ("READY" if best and best.edge.should_trade else "NO_TRADE")
+    if selected:
+        action_light = "green"
+        action_headline = f"TRADE — {action.replace('_', ' ')}"
+        action_detail = (
+            f"{focus.ticker if focus else ''} · {contracts} contracts · "
+            f"edge {top_edge:.1f}¢ · evidence {focus.evidence_score:.3f}"
+            if focus
+            else "Order executing"
+        )
+        cycle_status = "TRADE"
+    elif focus and focus.edge.should_trade and allowed and contracts > 0:
+        action_light = "green"
+        action_headline = "READY TO TRADE"
+        action_detail = (
+            f"{focus.ticker} · BUY {focus.direction.side.upper()} @ "
+            f"{focus.edge.market_price * 100:.0f}¢ · edge {top_edge:.1f}¢"
+        )
+        cycle_status = "READY"
+    elif focus and (focus.edge.should_trade or close_to_edge or readiness >= 65):
+        action_light = "yellow"
+        action_headline = "CLOSE — ALMOST THERE"
+        reason_txt = block_reason if not allowed else (focus.edge.reason if not focus.edge.should_trade else "Awaiting pick")
+        action_detail = (
+            f"Best: {focus.ticker} · edge {top_edge:.1f}¢ (need {min_edge:.1f}¢) · "
+            f"readiness {readiness:.0f}% · {reason_txt}"
+        )
+        cycle_status = "CLOSE"
+    else:
+        action_light = "red"
+        action_headline = "NO TRADE"
+        action_detail = (
+            blockers[0]
+            if blockers
+            else f"No edge above {min_edge:.1f}¢ across {len(candidates)} candidates"
+        )
+        cycle_status = "NO_TRADE"
 
     return DashboardSnapshot(
         updated_at=_iso_now(),
@@ -270,6 +304,9 @@ def build_snapshot(
         markets_scanned=markets_scanned,
         candidates=len(candidates),
         cycle_status=cycle_status,
+        action_light=action_light,
+        action_headline=action_headline,
+        action_detail=action_detail,
         readiness_pct=readiness,
         checklist=[asdict(c) for c in checklist],
         blockers=blockers[:8],

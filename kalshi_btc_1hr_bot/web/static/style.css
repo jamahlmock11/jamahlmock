@@ -29,7 +29,93 @@ html, body { margin: 0; min-height: 100%; color: var(--text); background: var(--
 .bg-glow-a { top: -20%; left: -10%; background: rgba(255,176,32,0.12); }
 .bg-glow-b { bottom: -25%; right: -10%; background: rgba(0,229,255,0.08); }
 
-.hero, .stats-strip, .layout, .footer { position: relative; z-index: 1; }
+.hero, .stats-strip, .layout, .footer, .status-banner, .top4-section { position: relative; z-index: 1; }
+
+/* === FLASHING STATUS BANNER === */
+.status-banner {
+  margin: 0;
+  padding: 0;
+  border-bottom: 3px solid transparent;
+  transition: background 0.3s, border-color 0.3s;
+}
+.status-banner.flash { animation: flash-border 1.2s ease-in-out infinite; }
+.status-red { background: linear-gradient(90deg, rgba(255,77,109,0.25), rgba(255,77,109,0.08)); border-bottom-color: var(--red); }
+.status-yellow { background: linear-gradient(90deg, rgba(255,209,102,0.28), rgba(255,209,102,0.08)); border-bottom-color: var(--yellow); }
+.status-green { background: linear-gradient(90deg, rgba(57,255,136,0.28), rgba(57,255,136,0.08)); border-bottom-color: var(--green); }
+.status-inner {
+  display: flex; align-items: center; gap: 1.25rem;
+  padding: 1rem 1.75rem; max-width: 100%;
+}
+.status-light {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  box-shadow: 0 0 20px currentColor;
+  animation: flash-dot 0.8s ease-in-out infinite;
+}
+.status-red .status-light { background: var(--red); color: var(--red); }
+.status-yellow .status-light { background: var(--yellow); color: var(--yellow); }
+.status-green .status-light { background: var(--green); color: var(--green); }
+.status-headline {
+  font-family: var(--display); font-size: clamp(1.1rem, 2.5vw, 1.8rem);
+  font-weight: 900; letter-spacing: 0.06em;
+}
+.status-red .status-headline { color: var(--red); text-shadow: 0 0 30px rgba(255,77,109,0.5); }
+.status-yellow .status-headline { color: var(--yellow); text-shadow: 0 0 30px rgba(255,209,102,0.5); }
+.status-green .status-headline { color: var(--green); text-shadow: 0 0 30px rgba(57,255,136,0.5); }
+.status-detail { color: var(--text); font-size: 0.82rem; margin-top: 0.2rem; opacity: 0.9; }
+.status-meta { margin-left: auto; text-align: right; flex-shrink: 0; }
+.status-readiness { font-family: var(--display); font-size: 2rem; font-weight: 900; line-height: 1; }
+.status-readiness-label { font-size: 0.62rem; color: var(--muted); letter-spacing: 0.15em; }
+
+/* === TOP 4 PRICE CARDS === */
+.top4-section { padding: 0.85rem 1.75rem 0.5rem; }
+.top4-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.65rem; }
+.top4-head h2 { margin: 0; font-family: var(--display); font-size: 0.85rem; color: var(--accent); letter-spacing: 0.08em; }
+.top4-updated { font-size: 0.68rem; color: var(--muted); }
+.top4-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.65rem; }
+.top4-card {
+  background: var(--panel); border: 2px solid var(--panel-border); border-radius: 14px;
+  padding: 0.75rem 0.85rem; position: relative; overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.top4-card.flash-pick { animation: card-pulse 1s ease-in-out infinite; }
+.top4-card.card-green { border-color: rgba(57,255,136,0.55); box-shadow: 0 0 24px rgba(57,255,136,0.15); }
+.top4-card.card-yellow { border-color: rgba(255,209,102,0.55); box-shadow: 0 0 24px rgba(255,209,102,0.12); }
+.top4-card.card-red { border-color: rgba(255,77,109,0.35); }
+.top4-card.card-pick::before {
+  content: "PICK"; position: absolute; top: 8px; right: 8px;
+  font-size: 0.55rem; font-weight: 700; letter-spacing: 0.1em;
+  padding: 0.15rem 0.4rem; border-radius: 4px;
+  background: rgba(255,176,32,0.25); color: var(--accent);
+}
+.top4-rank { font-size: 0.62rem; color: var(--muted); letter-spacing: 0.1em; }
+.top4-strike { font-family: var(--display); font-size: 1.05rem; margin: 0.2rem 0; color: var(--accent-2); }
+.top4-finish { font-size: 0.72rem; font-weight: 700; margin-bottom: 0.45rem; }
+.top4-finish.above { color: var(--green); }
+.top4-finish.below { color: var(--red); }
+.top4-prices { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem; margin-bottom: 0.45rem; }
+.top4-price-box {
+  background: rgba(0,0,0,0.25); border-radius: 8px; padding: 0.35rem 0.45rem; text-align: center;
+}
+.top4-price-box.active { background: rgba(0,229,255,0.12); border: 1px solid rgba(0,229,255,0.35); }
+.top4-price-label { font-size: 0.58rem; color: var(--muted); text-transform: uppercase; }
+.top4-price-val { font-family: var(--display); font-size: 1.1rem; font-weight: 700; }
+.top4-edge { font-size: 0.72rem; }
+.top4-edge.pos { color: var(--green); }
+.top4-edge.neg { color: var(--red); }
+.top4-card.empty { color: var(--muted); font-size: 0.8rem; grid-column: span 4; text-align: center; padding: 1.5rem; }
+
+@keyframes flash-border {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+@keyframes flash-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.7; }
+}
+@keyframes card-pulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(255,176,32,0.2); }
+  50% { box-shadow: 0 0 35px rgba(255,176,32,0.45); }
+}
 
 .hero {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
@@ -50,6 +136,7 @@ html, body { margin: 0; min-height: 100%; color: var(--text); background: var(--
 .mode-badge.paper { background: rgba(255,209,102,0.12); color: var(--yellow); border: 1px solid rgba(255,209,102,0.3); }
 .cycle-badge { background: rgba(0,229,255,0.1); color: var(--accent-2); border: 1px solid rgba(0,229,255,0.25); }
 .cycle-badge.trade { background: rgba(57,255,136,0.15); color: var(--green); border-color: rgba(57,255,136,0.35); animation: pulse 1.5s infinite; }
+.cycle-badge.close { background: rgba(255,209,102,0.15); color: var(--yellow); border-color: rgba(255,209,102,0.35); animation: pulse 1.2s infinite; }
 .pill-idle { background: rgba(139,150,171,0.15); color: var(--muted); }
 .pill-buy { background: rgba(57,255,136,0.18); color: var(--green); }
 .pill-block { background: rgba(255,77,109,0.15); color: var(--red); }
@@ -150,4 +237,11 @@ tr.pick td { background: rgba(255,176,32,0.06); }
   .panel.span-2 { grid-column: span 1; }
   .hero { flex-direction: column; }
   .hero-right { align-items: flex-start; text-align: left; }
+  .top4-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .top4-card.empty { grid-column: span 2; }
+  .status-inner { flex-wrap: wrap; }
+}
+@media (max-width: 520px) {
+  .top4-grid { grid-template-columns: 1fr; }
+  .top4-card.empty { grid-column: span 1; }
 }

@@ -38,6 +38,62 @@
     return "status-blocked";
   }
 
+  function cardLight(row, snap) {
+    if (row.is_pick && (row.action || "").startsWith("BUY")) return "green";
+    if (row.should_trade) return "green";
+    const th = snap.thresholds || {};
+    const minEdge = th.min_edge_cents || 2.5;
+    if (row.edge_cents >= minEdge - 1.0) return "yellow";
+    return "red";
+  }
+
+  function renderStatusBanner(snap) {
+    const banner = $("status-banner");
+    const light = snap.action_light || "red";
+    banner.className = "status-banner status-" + light + " flash";
+    $("status-headline").textContent = snap.action_headline || snap.cycle_status || "WAITING";
+    $("status-detail").textContent = snap.action_detail || (snap.blockers && snap.blockers[0]) || "Scanning markets…";
+    $("status-readiness").textContent = fmtPct(snap.readiness_pct || 0);
+  }
+
+  function renderTop4(snap) {
+    const grid = $("top4-grid");
+    const rows = snap.top_markets || [];
+    $("top4-updated").textContent = snap.updated_at ? "Updated " + snap.updated_at.slice(11, 19) + " UTC" : "—";
+
+    if (!rows.length) {
+      grid.innerHTML = '<div class="top4-card empty">No markets in window — waiting for bot scan…</div>';
+      return;
+    }
+
+    grid.innerHTML = rows.map(function (r) {
+      const light = cardLight(r, snap);
+      const finishClass = r.finish === "ABOVE" ? "above" : "below";
+      const edgeClass = r.edge_cents >= 0 ? "pos" : "neg";
+      const yesActive = r.side === "yes" ? " active" : "";
+      const noActive = r.side === "no" ? " active" : "";
+      const pickClass = r.is_pick ? " card-pick flash-pick" : "";
+
+      return (
+        '<div class="top4-card card-' + light + pickClass + '">' +
+        '<div class="top4-rank">#' + r.rank + " · " + Math.round(r.secs_left / 60) + "m left</div>" +
+        '<div class="top4-strike">$' + Number(r.strike).toLocaleString() + "</div>" +
+        '<div class="top4-finish ' + finishClass + '">' + r.finish + " · " + r.side.toUpperCase() + "</div>" +
+        '<div class="top4-prices">' +
+        '<div class="top4-price-box' + yesActive + '"><div class="top4-price-label">YES</div><div class="top4-price-val">' +
+        (r.yes_price_cents != null ? r.yes_price_cents + "¢" : "—") + "</div></div>" +
+        '<div class="top4-price-box' + noActive + '"><div class="top4-price-label">NO</div><div class="top4-price-val">' +
+        (r.no_price_cents != null ? r.no_price_cents + "¢" : "—") + "</div></div>" +
+        "</div>" +
+        '<div class="top4-edge ' + edgeClass + '">Edge ' + fmtCents(r.edge_cents) +
+        " · Ev " + Number(r.evidence_score).toFixed(3) + "</div>" +
+        '<div style="font-size:0.62rem;color:var(--muted);margin-top:0.3rem;overflow:hidden;text-overflow:ellipsis">' +
+        r.ticker + "</div>" +
+        "</div>"
+      );
+    }).join("");
+  }
+
   function renderSnapshot(snap, stats) {
     $("stat-spot").textContent = snap.spot ? "$" + Number(snap.spot).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
     $("stat-brti").textContent = (snap.brti_source || "—") + (snap.brti_official ? " · official" : " · proxy");
@@ -62,7 +118,7 @@
     const cycleEl = $("cycle-badge");
     const cs = snap.cycle_status || "WAITING";
     cycleEl.textContent = cs;
-    cycleEl.className = "cycle-badge" + (cs === "TRADE" ? " trade" : "");
+    cycleEl.className = "cycle-badge" + (cs === "TRADE" || cs === "READY" ? " trade" : cs === "CLOSE" ? " close" : "");
 
     const th = snap.thresholds || {};
     $("thresholds-line").textContent =
@@ -149,12 +205,16 @@
     const tbody = $("markets-table").querySelector("tbody");
     const rows = snap.top_markets || [];
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No tradeable markets this cycle.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty-state">No markets in window this cycle.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(function (r) {
       const ask = r.side === "yes" ? r.yes_ask : r.no_ask;
-      const status = r.is_pick ? (r.action.startsWith("BUY") ? "SELECTED" : "PICK") : (r.should_trade ? "EDGE OK" : "NO EDGE");
+      let status = "NO EDGE";
+      if (r.is_pick && (r.action || "").startsWith("BUY")) status = "▶ TRADE";
+      else if (r.is_pick) status = "★ PICK";
+      else if (r.should_trade) status = "EDGE OK";
+      else if (r.edge_cents >= ((snap.thresholds || {}).min_edge_cents || 2.5) - 1) status = "CLOSE";
       return (
         '<tr class="' + (r.is_pick ? "pick" : "") + '">' +
         "<td>" + r.rank + "</td>" +
@@ -165,7 +225,8 @@
         "<td>" + fmtCents(r.edge_cents) + "</td>" +
         "<td>" + Number(r.evidence_score).toFixed(3) + "</td>" +
         "<td>" + Math.round(r.p_fair * 100) + "%</td>" +
-        "<td>" + (ask != null ? Math.round(ask * 100) + "¢" : "—") + "</td>" +
+        "<td>YES " + (r.yes_price_cents != null ? r.yes_price_cents + "¢" : "—") +
+        " / NO " + (r.no_price_cents != null ? r.no_price_cents + "¢" : "—") + "</td>" +
         "<td>" + status + "</td>" +
         "</tr>"
       );
@@ -220,6 +281,8 @@
   function render(payload) {
     const snap = payload.snapshot || {};
     const stats = payload.stats || {};
+    renderStatusBanner(snap);
+    renderTop4(snap);
     renderSnapshot(snap, stats);
     renderBest(snap);
     renderChecklist(snap);

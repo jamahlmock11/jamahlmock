@@ -155,7 +155,7 @@ async def _broadcast(payload: dict[str, Any]) -> None:
 async def _push_loop() -> None:
     while True:
         await _broadcast(build_api_payload())
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.25)
 
 
 @asynccontextmanager
