@@ -9,9 +9,15 @@ from datetime import datetime, timezone
 
 from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import DataFeed
-from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
-from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
+from kalshi_btc_1hr_bot.evidence import (
+    MarketCandidate,
+    directional_evidence,
+    evaluate_edge_with_evidence,
+    evidence_score,
+    select_best_from_top_markets,
+)
 from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data
+from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import setup_logging
@@ -32,9 +38,10 @@ class HourlyBot:
         self.feed.close()
 
     def run_cycle(self) -> list[dict]:
-        """Scan open KXBTCD markets and return trade decisions."""
+        """Scan KXBTCD markets, rank top 4 by edge, trade the strongest evidence pick."""
         now = datetime.now(timezone.utc)
         data = self.feed.refresh()
+        candidates: list[MarketCandidate] = []
         decisions: list[dict] = []
         scanned = 0
 
@@ -70,81 +77,124 @@ class HourlyBot:
                     data=data,
                 )
 
+                direction = directional_evidence(forecast.votes)
+
                 yes_ask_f = float(yes_ask) if yes_ask is not None else 1.0
                 no_ask_f = float(no_ask) if no_ask is not None else 1.0
                 yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
                 no_bid_f = float(market.get("no_bid") or no_ask_f)
 
-                edge = evaluate_edge(
+                edge = evaluate_edge_with_evidence(
                     forecast.p_fair,
                     yes_ask_f,
                     no_ask_f,
                     yes_bid_f,
                     no_bid_f,
+                    direction,
                     fee_cents=self.config.edge.fee_per_contract_cents,
                     min_edge=self.config.edge.min_edge_cents,
                 )
 
-                allowed, block_reason = self.risk.allow_trade(ticker=ticker, seconds_to_expiry=secs)
-                win_prob = forecast.p_fair if edge.side == "yes" else 1.0 - forecast.p_fair
-                contracts = 0
-                if edge.should_trade and allowed:
-                    contracts = kelly_contracts(
-                        win_prob=win_prob,
-                        price=edge.market_price,
-                        sizing=self.config.sizing,
-                        confidence=forecast.confidence,
+                candidates.append(
+                    MarketCandidate(
+                        ticker=ticker,
+                        strike=float(strike),
+                        secs_left=secs,
+                        forecast=forecast,
+                        direction=direction,
+                        edge=edge,
+                        evidence_score=evidence_score(direction, forecast),
+                        market=market,
                     )
-
-                action = "NO_TRADE"
-                if edge.should_trade and allowed and contracts > 0:
-                    action = f"BUY_{edge.side.upper()}"
-                    self._execute(ticker, edge.side, contracts, edge.market_price)
-
-                decision = {
-                    "ticker": ticker,
-                    "action": action,
-                    "p_fair": forecast.p_fair,
-                    "confidence": forecast.confidence,
-                    "regime": forecast.vol_regime,
-                    "spot": data.spot,
-                    "strike": strike,
-                    "secs_left": secs,
-                    "edge": edge.edge_cents / 100.0,
-                    "side": edge.side,
-                    "price": edge.market_price,
-                    "contracts": contracts,
-                    "reason": edge.reason if edge.should_trade else block_reason,
-                    "layers": forecast.layers,
-                    "votes": [(v.name, v.prob_yes, v.weight) for v in forecast.votes],
-                    "agreement": forecast.agreement_score,
-                    "brti_official": forecast.is_official_brti,
-                    "brti_source": data.source,
-                }
-                decisions.append(decision)
-
-                logger.info(
-                    "%s %s | fair=%.1f%% edge=%.1f¢ conf=%.0f%% agree=%.0f%% brti=%s t=%.0fs",
-                    action,
-                    ticker,
-                    forecast.p_fair * 100,
-                    edge.edge_cents,
-                    forecast.confidence * 100,
-                    forecast.agreement_score * 100,
-                    data.source,
-                    secs,
                 )
         except Exception:
             logger.exception("market scan failed")
 
+        best = select_best_from_top_markets(candidates)
+        best_ticker = best.ticker if best else None
+
+        for cand in candidates:
+            allowed, block_reason = self.risk.allow_trade(
+                ticker=cand.ticker, seconds_to_expiry=cand.secs_left
+            )
+            is_pick = cand.ticker == best_ticker
+            contracts = 0
+            action = "NO_TRADE"
+
+            if is_pick and cand.edge.should_trade and allowed:
+                win_prob = (
+                    cand.forecast.p_fair
+                    if cand.direction.side == "yes"
+                    else 1.0 - cand.forecast.p_fair
+                )
+                contracts = kelly_contracts(
+                    win_prob=win_prob,
+                    price=cand.edge.market_price,
+                    sizing=self.config.sizing,
+                    confidence=cand.forecast.confidence,
+                )
+                if contracts > 0:
+                    action = f"BUY_{cand.direction.side.upper()}"
+                    self._execute(cand.ticker, cand.direction.side, contracts, cand.edge.market_price)
+
+            reason = cand.edge.reason
+            if not is_pick and cand.edge.should_trade:
+                reason = "not top-4 evidence pick"
+            elif not cand.edge.should_trade:
+                reason = cand.edge.reason
+            elif not allowed:
+                reason = block_reason
+
+            decision = {
+                "ticker": cand.ticker,
+                "action": action,
+                "p_fair": cand.forecast.p_fair,
+                "confidence": cand.forecast.confidence,
+                "regime": cand.forecast.vol_regime,
+                "spot": data.spot,
+                "strike": cand.strike,
+                "secs_left": cand.secs_left,
+                "edge": cand.edge.edge_cents / 100.0,
+                "side": cand.direction.side,
+                "finish": cand.direction.finish_label,
+                "evidence_above": cand.direction.above_score,
+                "evidence_below": cand.direction.below_score,
+                "evidence_margin": cand.direction.margin,
+                "evidence_score": cand.evidence_score,
+                "price": cand.edge.market_price,
+                "contracts": contracts,
+                "selected": is_pick and action != "NO_TRADE",
+                "reason": reason,
+                "layers": cand.forecast.layers,
+                "votes": [(v.name, v.prob_yes, v.weight) for v in cand.direction.top_votes],
+                "agreement": cand.forecast.agreement_score,
+                "brti_official": cand.forecast.is_official_brti,
+                "brti_source": data.source,
+            }
+            decisions.append(decision)
+
+            if is_pick or cand.edge.should_trade:
+                logger.info(
+                    "%s %s | finish=%s ev=%.3f edge=%.1f¢ conf=%.0f%% %s",
+                    action,
+                    cand.ticker,
+                    cand.direction.finish_label,
+                    cand.evidence_score,
+                    cand.edge.edge_cents,
+                    cand.forecast.confidence * 100,
+                    "(SELECTED)" if decision["selected"] else "",
+                )
+
         if scanned == 0:
             logger.info(
-                "No open hourly markets in window (brti=%.2f source=%s official=%s funding=%.5f)",
+                "No open hourly markets in window (brti=%.2f source=%s official=%s)",
                 data.spot,
                 data.source,
                 data.is_official,
-                data.funding_rate,
             )
+        elif best is None:
+            logger.info("NO TRADE — no candidate cleared edge + evidence from top %d", len(candidates))
+
         return decisions
 
     def _execute(self, ticker: str, side: str, contracts: int, price: float) -> None:
@@ -180,15 +230,16 @@ def run_once() -> None:
     bot = HourlyBot()
     try:
         decisions = bot.run_cycle()
-        trades = [d for d in decisions if d["action"] != "NO_TRADE"]
-        if not trades:
+        selected = [d for d in decisions if d.get("selected")]
+        if not selected:
             print("NO TRADE this cycle")
         else:
-            for d in trades:
-                print(
-                    f"{d['action']} {d['ticker']} x{d['contracts']} "
-                    f"@ {d['price']*100:.0f}¢ (fair={d['p_fair']:.1%}, edge={d['edge']*100:.1f}¢)"
-                )
+            d = selected[0]
+            print(
+                f"{d['action']} {d['ticker']} x{d['contracts']} "
+                f"finish={d['finish']} @ {d['price']*100:.0f}¢ "
+                f"(evidence={d['evidence_score']:.3f}, edge={d['edge']*100:.1f}¢)"
+            )
     finally:
         bot.close()
 

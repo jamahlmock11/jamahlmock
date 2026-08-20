@@ -12,6 +12,13 @@ from kalshi_btc_1hr_bot.config import BotConfig
 from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData, SyntheticPriceGenerator
 from kalshi_btc_1hr_bot.edge import evaluate_edge, vwap_fill_price
 from kalshi_btc_1hr_bot.ensemble import ModelVote, combine_models
+from kalshi_btc_1hr_bot.evidence import (
+    MarketCandidate,
+    directional_evidence,
+    evaluate_edge_with_evidence,
+    evidence_score,
+    select_best_from_top_markets,
+)
 from kalshi_btc_1hr_bot.forecast import ForecastEnsemble
 from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
@@ -65,6 +72,86 @@ def test_forecast_ensemble():
     assert 0 < result.p_fair < 1
     assert len(result.votes) >= 5
     assert result.agreement_score > 0
+
+
+def test_directional_evidence_picks_above():
+    votes = [
+        ModelVote("a", 0.70, 0.4, 0.9),
+        ModelVote("b", 0.65, 0.3, 0.8),
+        ModelVote("c", 0.55, 0.2, 0.7),
+        ModelVote("d", 0.45, 0.1, 0.6),  # below — lower rank
+    ]
+    d = directional_evidence(votes, n=4)
+    assert d.side == "yes"
+    assert d.above_score > d.below_score
+    assert len(d.top_votes) == 4
+
+
+def test_directional_evidence_picks_below():
+    votes = [
+        ModelVote("a", 0.30, 0.4, 0.9),
+        ModelVote("b", 0.35, 0.3, 0.8),
+        ModelVote("c", 0.40, 0.2, 0.7),
+        ModelVote("d", 0.60, 0.1, 0.6),
+    ]
+    d = directional_evidence(votes, n=4)
+    assert d.side == "no"
+    assert d.below_score > d.above_score
+
+
+def test_evaluate_edge_with_evidence():
+    votes = [
+        ModelVote("a", 0.72, 0.5, 0.9),
+        ModelVote("b", 0.68, 0.3, 0.8),
+        ModelVote("c", 0.66, 0.15, 0.7),
+        ModelVote("d", 0.64, 0.05, 0.6),
+    ]
+    direction = directional_evidence(votes, n=4)
+    edge = evaluate_edge_with_evidence(
+        0.70, 0.40, 0.65, 0.38, 0.63, direction, min_edge=2.5, min_evidence_margin=0.01
+    )
+    assert direction.side == "yes"
+    assert edge.should_trade
+    assert edge.side == "yes"
+
+
+def test_select_best_from_top_markets():
+    from kalshi_btc_1hr_bot.edge import TradeSignal
+    from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput
+    from kalshi_btc_1hr_bot.ensemble import EnsembleResult
+    from kalshi_btc_1hr_bot.model import ModelOutput
+    import numpy as np
+
+    def _cand(ticker: str, edge_cents: float, ev_score: float):
+        votes = (ModelVote("m", 0.7, 0.5, 0.9),)
+        direction = directional_evidence(votes, n=1)
+        mo = ModelOutput(
+            0.7, 0.3, 0.65, 0.68, 0.67, 0.66, 0.69, 0.5, 0.0, 0.0, 0.0, "low", 0.0, np.zeros(18)
+        )
+        ens = EnsembleResult(0.7, 0.3, 0.8, 0.1, 0.9, votes)
+        forecast = ForecastEnsembleOutput(0.7, 0.8, 0.9, 0.1, mo, ens, True)
+        return MarketCandidate(
+            ticker=ticker,
+            strike=65000,
+            secs_left=1200,
+            forecast=forecast,
+            direction=direction,
+            edge=TradeSignal(True, "yes", 0.7, 0.4, edge_cents, 0.3, "ok"),
+            evidence_score=ev_score,
+            market={},
+        )
+
+    cands = [
+        _cand("A", 5.0, 0.10),
+        _cand("B", 6.0, 0.25),
+        _cand("C", 5.5, 0.30),
+        _cand("D", 4.0, 0.40),
+        _cand("E", 7.0, 0.05),
+    ]
+    best = select_best_from_top_markets(cands, n=4)
+    assert best is not None
+    # Top 4 by edge: E, B, C, A — highest evidence among those is C
+    assert best.ticker == "C"
 
 
 def test_combine_models():

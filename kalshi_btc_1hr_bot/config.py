@@ -41,6 +41,11 @@ ENSEMBLE_WEIGHTS = {
 }
 ENSEMBLE_MIN_AGREEMENT = 0.55
 
+# Top-N selection: evidence from top votes, best market from top opportunities
+TOP_N_VOTES = 4
+TOP_N_MARKETS = 4
+MIN_EVIDENCE_MARGIN = 0.02
+
 
 @dataclass
 class ModelConfig:
