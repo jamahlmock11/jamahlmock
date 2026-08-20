@@ -23,5 +23,14 @@ paper:
 test:
 	$(PYTHON) -m pytest tests/ -v
 
+live:
+	$(PYTHON) bot.py --live --max-trade-usd 1
+
+live-once:
+	$(PYTHON) bot.py --live --max-trade-usd 1 --once
+
+live-loop:
+	$(PYTHON) bot.py --live --max-trade-usd 1
+
 clean:
 	rm -rf $(VENV) __pycache__ */__pycache__

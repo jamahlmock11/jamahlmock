@@ -75,14 +75,15 @@ class EdgeConfig:
 @dataclass
 class SizingConfig:
     kelly_fraction: float = 0.20
-    max_bankroll_pct: float = 0.04
-    bankroll_usd: float = 1000.0
+    max_bankroll_pct: float = 1.0
+    max_trade_usd: float = 1.0
+    bankroll_usd: float = 1.0
 
 
 @dataclass
 class RiskConfig:
     daily_loss_stop_pct: float = 0.06
-    max_open_positions: int = 2
+    max_open_positions: int = 1
     min_seconds_to_expiry: float = 120.0
     max_seconds_to_expiry: float = 3600.0
     cooldown_seconds: float = 5.0
@@ -114,12 +115,45 @@ class BotConfig:
         return "https://api.elections.kalshi.com/trade-api/v2"
 
 
+ROOT = Path(__file__).resolve().parent
+
+
 def load_config() -> BotConfig:
-    bankroll = float(os.getenv("BANKROLL_USD", "1000"))
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT.parent / ".env")
+    except ImportError:
+        pass
+
     cfg = BotConfig()
-    cfg.sizing.bankroll_usd = bankroll
-    cfg.paper = os.getenv("PAPER_MODE", "true").lower() != "false"
+    cfg.sizing.bankroll_usd = float(os.getenv("BANKROLL_USD", "1"))
+    cfg.sizing.max_trade_usd = float(os.getenv("MAX_TRADE_USD", "1"))
+    cfg.sizing.max_bankroll_pct = float(os.getenv("MAX_BANKROLL_PCT", "1.0"))
+    cfg.paper = os.getenv("PAPER_MODE", "true").lower() not in ("false", "0", "no")
+    cfg.kalshi_env = os.getenv("KALSHI_ENV", cfg.kalshi_env)
+    cfg.kalshi_api_key_id = os.getenv("KALSHI_API_KEY_ID", cfg.kalshi_api_key_id)
+    pem = os.getenv("KALSHI_PRIVATE_KEY_PEM", cfg.kalshi_private_key_pem)
+    key_path = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")
+    if key_path and not pem:
+        try:
+            pem = Path(key_path).read_text()
+        except OSError:
+            pass
+    cfg.kalshi_private_key_pem = pem
+    if cfg.sizing.max_trade_usd <= 1.0:
+        cfg.risk.max_open_positions = 1
     return cfg
 
 
-ROOT = Path(__file__).resolve().parent
+def require_live_credentials(cfg: BotConfig) -> None:
+    if cfg.paper:
+        return
+    if not cfg.kalshi_api_key_id or not cfg.kalshi_private_key_pem:
+        raise RuntimeError(
+            "Live trading requires KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PEM "
+            "(or KALSHI_PRIVATE_KEY_PATH) in environment or .env"
+        )
+
+

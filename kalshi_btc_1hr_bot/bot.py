@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
-from kalshi_btc_1hr_bot.config import BotConfig, load_config
+from kalshi_btc_1hr_bot.config import BotConfig, load_config, require_live_credentials
 from kalshi_btc_1hr_bot.data_feed import DataFeed
 from kalshi_btc_1hr_bot.evidence import (
     MarketCandidate,
@@ -213,7 +214,7 @@ class HourlyBot:
 
         try:
             price_cents = int(round(price * 100))
-            self.client.place_order(
+            resp = self.client.place_order(
                 ticker=ticker,
                 side=side,
                 action="buy",
@@ -221,13 +222,23 @@ class HourlyBot:
                 price_cents=price_cents,
             )
             self.risk.register_trade(ticker, cost)
-            logger.info("LIVE order placed: %s %s x%d", side.upper(), ticker, contracts)
+            logger.info(
+                "LIVE order placed: %s %s x%d @ %d¢ ($%.2f) order=%s",
+                side.upper(),
+                ticker,
+                contracts,
+                price_cents,
+                cost,
+                resp.get("order", {}).get("order_id") or resp.get("order_id") or "ok",
+            )
         except Exception:
             logger.exception("order failed for %s", ticker)
 
 
-def run_once() -> None:
-    bot = HourlyBot()
+def run_once(config: BotConfig | None = None) -> None:
+    cfg = config or load_config()
+    require_live_credentials(cfg)
+    bot = HourlyBot(cfg)
     try:
         decisions = bot.run_cycle()
         selected = [d for d in decisions if d.get("selected")]
@@ -244,8 +255,10 @@ def run_once() -> None:
         bot.close()
 
 
-def run_loop(max_cycles: int | None = None) -> None:
-    bot = HourlyBot()
+def run_loop(max_cycles: int | None = None, config: BotConfig | None = None) -> None:
+    cfg = config or load_config()
+    require_live_credentials(cfg)
+    bot = HourlyBot(cfg)
     cycles = 0
     try:
         while max_cycles is None or cycles < max_cycles:
@@ -262,6 +275,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="KXBTCD 1-hour forecasting bot")
     parser.add_argument("--paper", action="store_true", default=True, help="Paper trading mode")
     parser.add_argument("--live", action="store_true", help="Live trading (requires API keys)")
+    parser.add_argument("--max-trade-usd", type=float, default=None, help="Hard cap per trade (default $1)")
     parser.add_argument("--once", action="store_true", help="Run a single cycle")
     parser.add_argument("--cycles", type=int, default=None, help="Run N cycles then exit")
     args = parser.parse_args(argv)
@@ -270,11 +284,23 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config()
     if args.live:
         cfg.paper = False
+        cfg.kalshi_env = os.getenv("KALSHI_ENV", "prod")
+    if args.max_trade_usd is not None:
+        cfg.sizing.max_trade_usd = args.max_trade_usd
+        cfg.sizing.bankroll_usd = args.max_trade_usd
+
+    logger.info(
+        "mode=%s env=%s max_trade=$%.2f bankroll=$%.2f",
+        "PAPER" if cfg.paper else "LIVE",
+        cfg.kalshi_env,
+        cfg.sizing.max_trade_usd,
+        cfg.sizing.bankroll_usd,
+    )
 
     if args.once:
-        run_once()
+        run_once(cfg)
     else:
-        run_loop(max_cycles=args.cycles)
+        run_loop(max_cycles=args.cycles, config=cfg)
 
 
 if __name__ == "__main__":

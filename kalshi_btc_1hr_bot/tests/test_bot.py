@@ -197,6 +197,15 @@ def test_vwap_fill_price():
     assert abs(px - expected) < 1e-9
 
 
+def test_kelly_sizing_one_dollar_cap():
+    from kalshi_btc_1hr_bot.config import SizingConfig
+
+    sizing = SizingConfig(bankroll_usd=1.0, max_trade_usd=1.0, max_bankroll_pct=1.0)
+    contracts = kelly_contracts(win_prob=0.65, price=0.40, sizing=sizing, confidence=0.8)
+    assert contracts >= 1
+    assert contracts * 0.40 <= 1.0
+
+
 def test_kelly_sizing():
     cfg = BotConfig()
     contracts = kelly_contracts(
