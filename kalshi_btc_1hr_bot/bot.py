@@ -212,7 +212,7 @@ class HourlyBot:
                 "agreement": cand.forecast.agreement_score,
                 "brti_official": cand.forecast.is_official_brti,
                 "brti_source": data.source,
-                "crowd": cand.forecast.crowd_summary(
+                "crowd": cand.forecast.crowd_summary_at(
                     min_favorite=cand.thresholds.min_crowd_favorite if cand.thresholds else None
                 ),
                 "quorum_met": cand.forecast.quorum_met,
