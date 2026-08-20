@@ -111,6 +111,7 @@ class HourlyBot:
                     direction,
                     fee_cents=self.config.edge.fee_per_contract_cents,
                     min_edge=self.config.edge.min_edge_cents,
+                    forecast=forecast,
                 )
 
                 candidates.append(
@@ -202,6 +203,8 @@ class HourlyBot:
                 "agreement": cand.forecast.agreement_score,
                 "brti_official": cand.forecast.is_official_brti,
                 "brti_source": data.source,
+                "crowd": cand.forecast.crowd_summary,
+                "quorum_met": cand.forecast.quorum_met,
             }
             decisions.append(decision)
 
@@ -252,6 +255,13 @@ class HourlyBot:
         balance = self._balance_usd()
         try:
             settlements = self.journal.poll_settlements(self.client)
+            for item in settlements:
+                outcome_yes = str(item.get("result", "")).lower() == "yes"
+                # Update crowd adaptive weights when we know outcome
+                for cand in candidates:
+                    if cand.ticker == item.get("ticker"):
+                        self.ensemble.record_settlement(cand.forecast, outcome_yes)
+                        break
         except Exception:
             settlements = []
 

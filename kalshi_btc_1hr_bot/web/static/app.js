@@ -182,20 +182,46 @@
     }).join("");
   }
 
-  function renderVotes(snap) {
+  function renderCrowd(snap) {
     const grid = $("votes-grid");
-    const votes = snap.model_votes || [];
-    if (!votes.length) {
-      grid.innerHTML = '<div class="empty-state">No vote data yet.</div>';
+    const crowd = snap.crowd || {};
+    const members = crowd.members || snap.model_votes || [];
+    $("crowd-quorum").textContent =
+      crowd.quorum ? "quorum " + crowd.quorum + (crowd.quorum_met ? " ✓" : " ✕") : "quorum —";
+
+    const summaryEl = $("crowd-summary");
+    if (crowd.prob_yes != null) {
+      const sideClass = crowd.consensus === "YES" ? "yes" : "no";
+      summaryEl.innerHTML =
+        '<div class="crowd-stat"><div class="k">Crowd P(YES)</div><div class="v">' +
+        (crowd.prob_yes * 100).toFixed(1) + "%</div></div>" +
+        '<div class="crowd-stat"><div class="k">Consensus</div><div class="v ' + sideClass + '">' +
+        (crowd.finish || crowd.consensus) + "</div></div>" +
+        '<div class="crowd-stat"><div class="k">Synthesis</div><div class="v">' + (crowd.synthesis || "—") + "</div></div>" +
+        '<div class="crowd-stat"><div class="k">Agreement</div><div class="v">' +
+        (crowd.agreement != null ? Math.round(crowd.agreement * 100) + "%" : "—") + "</div></div>" +
+        '<div class="crowd-stat"><div class="k">Votes</div><div class="v">' +
+        (crowd.yes_votes != null ? crowd.yes_votes + "Y / " + crowd.no_votes + "N" : "—") + "</div></div>";
+    } else {
+      summaryEl.innerHTML = '<span class="empty-state">Crowd data loading…</span>';
+    }
+
+    if (!members.length) {
+      grid.innerHTML = '<div class="empty-state">No crowd voters yet.</div>';
       return;
     }
-    grid.innerHTML = votes.map(function (v) {
-      const sideClass = v.side === "ABOVE" ? "above" : "below";
+    const topNames = new Set((crowd.top_votes || []).map(function (v) { return v.name; }));
+    grid.innerHTML = members.map(function (v) {
+      const side = (v.side || (v.prob_yes >= 0.5 ? "ABOVE" : "BELOW")).toUpperCase();
+      const sideClass = side === "YES" || side === "ABOVE" ? "above" : "below";
+      const qClass = side === "YES" || side === "ABOVE" ? "quorum-yes" : "quorum-no";
+      const topClass = topNames.has(v.name) ? " top-vote" : "";
       return (
-        '<div class="vote-card">' +
+        '<div class="vote-card ' + qClass + topClass + '">' +
         '<div class="vote-name">' + v.name + "</div>" +
-        '<div class="vote-side ' + sideClass + '">' + v.side + "</div>" +
-        '<div class="vote-meta">P(YES) ' + (v.prob_yes * 100).toFixed(1) + "% · w=" + v.weight + "</div>" +
+        '<div class="vote-group">' + (v.group || "model") + "</div>" +
+        '<div class="vote-side ' + sideClass + '">' + (side === "ABOVE" ? "ABOVE" : side === "BELOW" ? "BELOW" : side) + "</div>" +
+        '<div class="vote-meta">P(YES) ' + ((v.prob_yes || 0) * 100).toFixed(1) + "% · w=" + (v.weight || 0) + "</div>" +
         "</div>"
       );
     }).join("");
@@ -286,7 +312,7 @@
     renderSnapshot(snap, stats);
     renderBest(snap);
     renderChecklist(snap);
-    renderVotes(snap);
+    renderCrowd(snap);
     renderMarkets(snap);
     renderTrades(payload.trades || []);
     renderCycles(payload.cycles || []);

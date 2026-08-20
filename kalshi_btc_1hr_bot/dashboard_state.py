@@ -52,6 +52,7 @@ class DashboardSnapshot:
     thresholds: dict[str, Any] = field(default_factory=dict)
     config_summary: dict[str, Any] = field(default_factory=dict)
     recent_settlements: list[dict[str, Any]] = field(default_factory=list)
+    crowd: dict[str, Any] = field(default_factory=dict)
 
 
 def _iso_now() -> str:
@@ -147,6 +148,15 @@ def build_checklist(
                 "edge",
             ),
             CheckItem(
+                f"Crowd quorum ≥ {config.CROWD_MIN_QUORUM}",
+                best.forecast.quorum_met,
+                (
+                    f"{best.forecast.crowd.quorum_count}/{best.forecast.crowd.quorum_required} "
+                    f"on {best.forecast.crowd.consensus_side.upper()}"
+                ),
+                "crowd",
+            ),
+            CheckItem(
                 f"Ensemble agreement ≥ {config.ENSEMBLE_MIN_AGREEMENT:.0%}",
                 best.forecast.agreement_score >= config.ENSEMBLE_MIN_AGREEMENT,
                 f"{best.forecast.agreement_score:.0%}",
@@ -235,6 +245,9 @@ def build_snapshot(
 
     # Best focus = evidence pick, or highest-edge candidate for display
     focus = best or (top_by_edge[0] if top_by_edge else None)
+    crowd_data: dict[str, Any] = {}
+    if focus is not None:
+        crowd_data = focus.forecast.crowd_summary
     if focus is not None:
         dec = best_decision or {}
         best_pick = _candidate_row(
@@ -348,6 +361,7 @@ def build_snapshot(
             "series": cfg.series_ticker,
         },
         recent_settlements=recent_settlements or [],
+        crowd=crowd_data,
     )
 
 

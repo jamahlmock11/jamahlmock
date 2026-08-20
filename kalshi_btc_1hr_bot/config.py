@@ -41,6 +41,12 @@ ENSEMBLE_WEIGHTS = {
 }
 ENSEMBLE_MIN_AGREEMENT = 0.55
 
+# Crowd forecast system
+CROWD_SYNTHESIS = "blend"  # weighted | median | trimmed | blend
+CROWD_MIN_QUORUM = 5
+CROWD_USE_ADAPTIVE_WEIGHTS = True
+CROWD_PERFORMANCE_PATH = str(Path(__file__).resolve().parent / "data" / "crowd_performance.json")
+
 # Top-N selection: evidence from top votes, best market from top opportunities
 TOP_N_VOTES = 4
 TOP_N_MARKETS = 4

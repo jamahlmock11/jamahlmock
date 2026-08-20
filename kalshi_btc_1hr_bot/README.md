@@ -1,9 +1,9 @@
 # Kalshi BTC 1-Hour Forecasting Bot
 
 A Python framework for forecasting Kalshi's `KXBTCD` hourly binary contracts —
-"Will BTC close above the strike at the top of the hour?" — using a 5-layer
-ensemble probability model with multi-timeframe momentum, funding rates,
-mean reversion, and volatility regime detection.
+"Will BTC close above the strike at the top of the hour?" — using a **crowd forecast
+ensemble**: 13+ independent voters (model layers + trend/contrarian/anchor lenses),
+quorum gating, and blend/median synthesis.
 
 Same settlement mechanism as the 15-min bot (60-second BRTI average), but the
 longer window enables a richer signal set.

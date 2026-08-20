@@ -200,6 +200,20 @@ html, body { margin: 0; min-height: 100%; color: var(--text); background: var(--
 .check-detail { color: var(--muted); font-size: 0.68rem; margin-top: 0.1rem; }
 
 .votes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.55rem; }
+.crowd-grid { grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); }
+.crowd-summary {
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin-bottom: 0.75rem;
+  padding: 0.55rem 0.75rem; border-radius: 10px; background: rgba(0,0,0,0.2);
+  font-size: 0.75rem;
+}
+.crowd-stat .k { color: var(--muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.crowd-stat .v { font-family: var(--display); font-size: 0.95rem; }
+.crowd-stat .v.yes { color: var(--green); }
+.crowd-stat .v.no { color: var(--red); }
+.vote-card.quorum-yes { border-color: rgba(57,255,136,0.35); }
+.vote-card.quorum-no { border-color: rgba(255,77,109,0.25); }
+.vote-card.top-vote { box-shadow: inset 0 0 0 1px rgba(255,176,32,0.35); }
+.vote-group { font-size: 0.55rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .vote-card {
   border: 1px solid rgba(0,229,255,0.15); border-radius: 12px; padding: 0.55rem;
   background: rgba(0,229,255,0.04);

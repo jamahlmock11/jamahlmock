@@ -68,10 +68,27 @@ def test_forecast_ensemble():
         funding=FundingRate(0.0001),
         is_official_brti=True,
     )
-    result = ensemble.forecast(state)
+    from kalshi_btc_1hr_bot.data_feed import MarketData
+    import numpy as np
+
+    data = MarketData(
+        spot=65000,
+        vwap=64950,
+        funding_rate=0.0001,
+        annualized_vol=0.5,
+        mu_5m=0.0001,
+        mu_15m=0.00008,
+        mu_30m=0.00005,
+        closes_1m=np.linspace(64800, 65000, 60),
+        price_history=_sample_history(),
+        funding=FundingRate(0.0001),
+        is_official=True,
+    )
+    result = ensemble.forecast(state, data)
     assert 0 < result.p_fair < 1
-    assert len(result.votes) >= 5
+    assert len(result.crowd.members) >= 10
     assert result.agreement_score > 0
+    assert result.crowd.quorum_required >= 5
 
 
 def test_directional_evidence_picks_above():
@@ -123,13 +140,20 @@ def test_select_best_from_top_markets():
     import numpy as np
 
     def _cand(ticker: str, edge_cents: float, ev_score: float):
+        from kalshi_btc_1hr_bot.crowd_forecast import CrowdForecast, CrowdForecastSystem
+        from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
+
         votes = (ModelVote("m", 0.7, 0.5, 0.9),)
         direction = directional_evidence(votes, n=1)
         mo = ModelOutput(
             0.7, 0.3, 0.65, 0.68, 0.67, 0.66, 0.69, 0.5, 0.0, 0.0, 0.0, "low", 0.0, np.zeros(18)
         )
         ens = EnsembleResult(0.7, 0.3, 0.8, 0.1, 0.9, votes)
-        forecast = ForecastEnsembleOutput(0.7, 0.8, 0.9, 0.1, mo, ens, True)
+        state = build_market_state(
+            spot=65000, strike=65000, seconds_remaining=1200, price_history=_sample_history()
+        )
+        crowd = CrowdForecastSystem().forecast(mo, state, None)
+        forecast = ForecastEnsembleOutput(0.7, 0.8, 0.9, 0.1, mo, ens, crowd, True)
         return MarketCandidate(
             ticker=ticker,
             strike=65000,

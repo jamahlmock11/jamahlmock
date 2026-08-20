@@ -76,9 +76,22 @@ def evaluate_edge_with_evidence(
     fee_cents: float = config.FEE_PER_CONTRACT_CENTS,
     min_edge: float = config.MIN_EDGE_CENTS,
     min_evidence_margin: float | None = None,
+    forecast: ForecastEnsembleOutput | None = None,
 ) -> TradeSignal:
     """Evaluate edge only on the evidence-backed side (above/below strike)."""
     min_margin = min_evidence_margin if min_evidence_margin is not None else config.MIN_EVIDENCE_MARGIN
+
+    if forecast is not None and not forecast.quorum_met:
+        crowd = forecast.crowd
+        return TradeSignal(
+            False,
+            direction.side,
+            p_fair,
+            yes_ask if direction.side == "yes" else no_ask,
+            0.0,
+            0.0,
+            f"Crowd quorum {crowd.quorum_count}/{crowd.quorum_required} on {crowd.consensus_side.upper()}",
+        )
 
     if direction.margin < min_margin:
         return TradeSignal(
