@@ -11,7 +11,8 @@ import numpy as np
 from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData, SyntheticPriceGenerator
 from kalshi_btc_1hr_bot.edge import evaluate_edge
-from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
+from kalshi_btc_1hr_bot.forecast import ForecastEnsemble
+from kalshi_btc_1hr_bot.model import build_market_state
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import setup_logging
 
@@ -77,6 +78,8 @@ def _synthetic_market_data(
         price_history=history,
         funding=FundingRate(funding_rate=funding),
         timestamp=now,
+        is_official=True,
+        source="synthetic_brti",
     )
 
 
@@ -87,7 +90,7 @@ def run_synthetic_backtest(
     config: BotConfig | None = None,
 ) -> BacktestReport:
     cfg = config or load_config()
-    model = ForecastModel()
+    model = ForecastEnsemble()
     gen = SyntheticPriceGenerator(seed=seed)
     report = BacktestReport(markets_simulated=n_markets)
 
@@ -112,6 +115,7 @@ def run_synthetic_backtest(
                 vwap=data.vwap,
                 funding=data.funding,
                 now_ts=data.timestamp,
+                is_official_brti=data.is_official,
             )
         )
 

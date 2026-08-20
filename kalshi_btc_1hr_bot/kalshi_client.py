@@ -93,6 +93,26 @@ class KalshiClient:
         }
         return self._request("POST", "/portfolio/orders", json=body)
 
+    @property
+    def authenticated(self) -> bool:
+        return self._private_key is not None
+
+    def get_brti(self, index_id: str = "BRTI") -> float | None:
+        """Fetch CF Benchmarks BRTI via Kalshi authenticated passthrough."""
+        from kalshi_btc_1hr_bot.brti import parse_brti_payload
+
+        if not self.authenticated:
+            return None
+        try:
+            data = self._request("GET", "/cfbenchmarks/values", params={"id": index_id})
+        except Exception as exc:
+            logger.warning("BRTI passthrough failed: %s", exc)
+            return None
+        value = parse_brti_payload(data)
+        if value is None:
+            logger.warning("unrecognized BRTI payload")
+        return value
+
 
 def normalize_market(raw: dict) -> dict:
     """Extract normalized fields from a Kalshi market payload."""

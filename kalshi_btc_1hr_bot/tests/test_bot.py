@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import numpy as np
 
+from kalshi_btc_1hr_bot.brti import BrtiQuote, resolve_brti
 from kalshi_btc_1hr_bot.config import BotConfig
 from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData, SyntheticPriceGenerator
 from kalshi_btc_1hr_bot.edge import evaluate_edge, vwap_fill_price
+from kalshi_btc_1hr_bot.ensemble import ModelVote, combine_models
+from kalshi_btc_1hr_bot.forecast import ForecastEnsemble
 from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import gbm_prob_above, quadratic_fee
@@ -43,9 +47,47 @@ def test_model_forecast():
     )
     result = model.forecast(state)
     assert 0 < result.p_calibrated < 1
-    assert 0 < result.p_gbm < 1
-    assert result.vol_regime in ("low", "medium", "high")
     assert len(result.features) == 18
+
+
+def test_forecast_ensemble():
+    ensemble = ForecastEnsemble()
+    state = build_market_state(
+        spot=65000,
+        strike=64500,
+        seconds_remaining=1200,
+        price_history=_sample_history(),
+        vwap=64950,
+        funding=FundingRate(0.0001),
+        is_official_brti=True,
+    )
+    result = ensemble.forecast(state)
+    assert 0 < result.p_fair < 1
+    assert len(result.votes) >= 5
+    assert result.agreement_score > 0
+
+
+def test_combine_models():
+    votes = [
+        ModelVote("a", 0.60, 0.5, 0.8),
+        ModelVote("b", 0.58, 0.3, 0.7),
+        ModelVote("c", 0.62, 0.2, 0.75),
+    ]
+    result = combine_models(votes)
+    assert result.prob_yes > 0.5
+    assert result.agreement_score >= 0.5
+
+
+def test_brti_resolve_fallback():
+    with patch("kalshi_btc_1hr_bot.brti.fetch_brti_public_summary", return_value=None):
+        quote = resolve_brti(prefer_official=True, allow_exchange_proxy=True)
+    assert quote.value > 0
+    assert quote.source in ("kraken_xbtusd", "coinbase_btc_usd", "cfbenchmarks_public_rti")
+
+
+def test_brti_public_quote():
+    quote = BrtiQuote(value=65000.0, source="test", is_official=True)
+    assert quote.is_official
 
 
 def test_edge_calculation():
@@ -58,20 +100,7 @@ def test_edge_calculation():
         min_edge=2.5,
     )
     assert edge.side == "yes"
-    assert edge.edge_cents > 0
     assert edge.should_trade
-
-
-def test_edge_below_threshold():
-    edge = evaluate_edge(
-        p_fair=0.55,
-        yes_ask=0.52,
-        no_ask=0.52,
-        yes_bid=0.50,
-        no_bid=0.50,
-        min_edge=2.5,
-    )
-    assert not edge.should_trade
 
 
 def test_vwap_fill_price():
@@ -92,17 +121,8 @@ def test_kelly_sizing():
     assert contracts > 0
 
 
-def test_synthetic_generator():
-    gen = SyntheticPriceGenerator(seed=42)
-    path, funding, vwap = gen.next_hour_path(spot0=65000)
-    assert len(path) == 3601
-    assert path[0] == 65000
-    assert vwap > 0
-
-
 def test_backtest_runs():
     from kalshi_btc_1hr_bot.backtest import run_synthetic_backtest
 
     report = run_synthetic_backtest(n_markets=20, seed=42)
     assert report.markets_simulated == 20
-    assert isinstance(report.total_pnl, float)

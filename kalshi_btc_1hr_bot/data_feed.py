@@ -1,4 +1,4 @@
-"""BTC data feed: Binance spot, funding rate, and BRTI proxy."""
+"""BTC data feed: CF Benchmarks BRTI, funding rate, momentum, and VWAP."""
 
 from __future__ import annotations
 
@@ -6,9 +6,13 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import httpx
 import numpy as np
+
+from kalshi_btc_1hr_bot import config
+from kalshi_btc_1hr_bot.brti import resolve_brti
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +35,18 @@ class MarketData:
     closes_1m: np.ndarray = field(repr=False)
     price_history: list = field(default_factory=list)
     funding: FundingRate | None = None
-    source: str = "binance"
+    source: str = "brti"
+    is_official: bool = True
     timestamp: float = field(default_factory=time.time)
+    updated_at: datetime | None = None
 
 
 class DataFeed:
-    """Fetches BTC price, funding rate, and computes momentum/VWAP features."""
+    """Fetches BRTI spot, funding rate, and computes momentum/VWAP features."""
 
-    def __init__(self, *, cache_seconds: float = 3.0) -> None:
+    def __init__(self, *, cache_seconds: float = 3.0, kalshi_client=None) -> None:
         self.cache_seconds = cache_seconds
+        self._kalshi_client = kalshi_client
         self._last: MarketData | None = None
         self._last_fetch = 0.0
         self._client = httpx.Client(timeout=15.0)
@@ -52,7 +59,16 @@ class DataFeed:
         if self._last and now - self._last_fetch < self.cache_seconds:
             return self._last
 
-        spot, source = self._fetch_spot()
+        brti = resolve_brti(
+            kalshi_client=self._kalshi_client,
+            index_id=config.BRTI_INDEX_ID,
+            prefer_official=config.BRTI_PREFER_OFFICIAL,
+            allow_exchange_proxy=config.BRTI_ALLOW_EXCHANGE_PROXY,
+        )
+        spot = brti.value
+        source = brti.source
+        is_official = brti.is_official
+
         funding = self._fetch_funding_rate()
         closes = self._fetch_closes(limit=60)
         vwap = self._compute_vwap(closes) if len(closes) else spot
@@ -74,22 +90,12 @@ class DataFeed:
             price_history=history,
             funding=FundingRate(funding_rate=funding),
             source=source,
+            is_official=is_official,
             timestamp=now,
+            updated_at=brti.updated_at,
         )
         self._last_fetch = now
         return self._last
-
-    def _fetch_spot(self) -> tuple[float, str]:
-        for name, fetch in (
-            ("binance", self._fetch_binance_spot),
-            ("kraken", self._fetch_kraken_spot),
-            ("coinbase", self._fetch_coinbase_spot),
-        ):
-            try:
-                return fetch(), name
-            except Exception as exc:
-                logger.debug("%s spot failed: %s", name, exc)
-        raise RuntimeError("all spot feeds failed")
 
     def _fetch_closes(self, limit: int = 60) -> np.ndarray:
         for fetch in (self._fetch_binance_klines, self._fetch_kraken_closes):
@@ -98,31 +104,6 @@ class DataFeed:
             except Exception as exc:
                 logger.debug("klines fetch failed: %s", exc)
         return np.array([], dtype=float)
-
-    def _fetch_binance_spot(self) -> float:
-        resp = self._client.get(
-            "https://api.binance.com/api/v3/ticker/price",
-            params={"symbol": "BTCUSDT"},
-        )
-        resp.raise_for_status()
-        return float(resp.json()["price"])
-
-    def _fetch_kraken_spot(self) -> float:
-        resp = self._client.get(
-            "https://api.kraken.com/0/public/Ticker",
-            params={"pair": "XBTUSD"},
-        )
-        resp.raise_for_status()
-        for key, val in (resp.json().get("result") or {}).items():
-            if key == "last":
-                continue
-            return float(val["c"][0])
-        raise RuntimeError("kraken ticker empty")
-
-    def _fetch_coinbase_spot(self) -> float:
-        resp = self._client.get("https://api.coinbase.com/v2/prices/BTC-USD/spot")
-        resp.raise_for_status()
-        return float(resp.json()["data"]["amount"])
 
     def _fetch_funding_rate(self) -> float:
         try:
@@ -174,7 +155,6 @@ class DataFeed:
     def _compute_vwap(closes: np.ndarray) -> float:
         if len(closes) == 0:
             return 0.0
-        # Proxy VWAP with volume-weighted closes (equal weight when volume unavailable)
         return float(np.mean(closes))
 
     @staticmethod
@@ -192,7 +172,7 @@ class DataFeed:
             return 0.50
         rets = np.diff(np.log(closes))
         per_min = float(np.std(rets))
-        annual = per_min * math.sqrt(525600)  # minutes per year
+        annual = per_min * math.sqrt(525600)
         return max(annual, 0.05)
 
 
@@ -220,7 +200,6 @@ class SyntheticPriceGenerator:
         prices = np.empty(n_steps + 1)
         prices[0] = spot0
         for i in range(1, n_steps + 1):
-            # Mean reversion toward VWAP proxy (running mean)
             vwap = float(np.mean(prices[:i]))
             mr = -0.0001 * (prices[i - 1] - vwap) / vwap
             shock = self.rng.normal(0, vol * math.sqrt(dt / (365.25 * 24 * 3600)))

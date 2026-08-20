@@ -47,6 +47,7 @@ class MarketState:
     now_ts: float = 0.0
     funding: Optional[FundingRate] = None
     vwap: float = 0.0  # volume-weighted avg price (0 = not available)
+    is_official_brti: bool = True
 
 
 @dataclass
@@ -345,6 +346,7 @@ def build_market_state(
     ob_bids: list | None = None,
     ob_asks: list | None = None,
     now_ts: float | None = None,
+    is_official_brti: bool = True,
 ) -> MarketState:
     return MarketState(
         current_price=spot,
@@ -357,6 +359,7 @@ def build_market_state(
         now_ts=now_ts or time.time(),
         funding=funding,
         vwap=vwap,
+        is_official_brti=is_official_brti,
     )
 
 

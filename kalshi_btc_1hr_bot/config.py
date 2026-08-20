@@ -24,6 +24,23 @@ MEAN_REVERSION_STRENGTH = 0.15
 OBI_LEVELS = 5
 CALIB_MODEL_PATH = str(Path(__file__).resolve().parent / "data" / "calib_model.joblib")
 
+# CF Benchmarks BRTI — https://www.cfbenchmarks.com/data/indices/BRTI
+BRTI_INDEX_ID = "BRTI"
+BRTI_PREFER_OFFICIAL = True
+BRTI_ALLOW_EXCHANGE_PROXY = True
+PROXY_BRTI_CONFIDENCE_PENALTY = 0.75
+
+# Forecast ensemble weights (should sum to ~1.0)
+ENSEMBLE_WEIGHTS = {
+    "five_layer": 0.40,
+    "gbm_core": 0.20,
+    "momentum": 0.15,
+    "mean_reversion": 0.10,
+    "funding": 0.10,
+    "obi": 0.05,
+}
+ENSEMBLE_MIN_AGREEMENT = 0.55
+
 
 @dataclass
 class ModelConfig:

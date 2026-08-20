@@ -11,7 +11,7 @@ from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import DataFeed
 from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
-from kalshi_btc_1hr_bot.model import ForecastModel, forecast_from_market_data
+from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import setup_logging
@@ -23,8 +23,8 @@ class HourlyBot:
     def __init__(self, config: BotConfig | None = None) -> None:
         self.config = config or load_config()
         self.client = KalshiClient(self.config)
-        self.feed = DataFeed()
-        self.model = ForecastModel()
+        self.feed = DataFeed(kalshi_client=self.client)
+        self.ensemble = ForecastEnsemble()
         self.risk = RiskManager(self.config)
 
     def close(self) -> None:
@@ -62,8 +62,8 @@ class HourlyBot:
                 scanned += 1
                 ticker = str(market.get("ticker") or "")
 
-                forecast = forecast_from_market_data(
-                    self.model,
+                forecast = forecast_ensemble_from_market_data(
+                    self.ensemble,
                     spot=data.spot,
                     strike=float(strike),
                     seconds_to_expiry=secs,
@@ -116,17 +116,22 @@ class HourlyBot:
                     "contracts": contracts,
                     "reason": edge.reason if edge.should_trade else block_reason,
                     "layers": forecast.layers,
+                    "votes": [(v.name, v.prob_yes, v.weight) for v in forecast.votes],
+                    "agreement": forecast.agreement_score,
+                    "brti_official": forecast.is_official_brti,
+                    "brti_source": data.source,
                 }
                 decisions.append(decision)
 
                 logger.info(
-                    "%s %s | fair=%.1f%% edge=%.1f¢ conf=%.0f%% regime=%s t=%.0fs",
+                    "%s %s | fair=%.1f%% edge=%.1f¢ conf=%.0f%% agree=%.0f%% brti=%s t=%.0fs",
                     action,
                     ticker,
                     forecast.p_fair * 100,
                     edge.edge_cents,
                     forecast.confidence * 100,
-                    forecast.vol_regime,
+                    forecast.agreement_score * 100,
+                    data.source,
                     secs,
                 )
         except Exception:
@@ -134,8 +139,10 @@ class HourlyBot:
 
         if scanned == 0:
             logger.info(
-                "No open hourly markets in window (spot=%.2f, funding=%.5f)",
+                "No open hourly markets in window (brti=%.2f source=%s official=%s funding=%.5f)",
                 data.spot,
+                data.source,
+                data.is_official,
                 data.funding_rate,
             )
         return decisions
