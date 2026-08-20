@@ -353,7 +353,11 @@ class HourlyBot:
                 price_cents=price_cents,
             )
             order_id = str(
-                resp.get("order", {}).get("order_id") or resp.get("order_id") or "ok"
+                resp.get("order", {}).get("order_id")
+                or resp.get("order_id")
+                or resp.get("order", {}).get("id")
+                or resp.get("id")
+                or "ok"
             )
             self.risk.register_trade(ticker, cost)
             self.journal.record_trade(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterator
 from urllib.parse import urlparse
@@ -57,7 +58,9 @@ class KalshiClient:
                 "KALSHI-ACCESS-SIGNATURE": self._sign(ts, method, sign_path),
             }
         resp = self._client.request(method, url, params=params, json=json, headers=headers)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            logger.error("Kalshi %s %s -> %s: %s", method, path, resp.status_code, resp.text[:500])
+            resp.raise_for_status()
         return resp.json()
 
     def get_balance(self) -> dict:
@@ -88,15 +91,68 @@ class KalshiClient:
         count: int,
         price_cents: int,
         order_type: str = "limit",
+        time_in_force: str = "immediate_or_cancel",
+        client_order_id: str | None = None,
     ) -> dict:
-        body = {
+        """Place an order — prefers Kalshi V2 events API, falls back to legacy."""
+        side = side.lower()
+        action = action.lower()
+        price_dollars = price_cents / 100.0
+        yes_price_dollars = f"{price_dollars:.4f}" if side == "yes" else None
+        no_price_dollars = f"{price_dollars:.4f}" if side == "no" else None
+        cid = client_order_id or str(uuid.uuid4())
+
+        def _v2_book_side_and_price() -> tuple[str, str]:
+            if side == "yes":
+                book_side = "bid" if action == "buy" else "ask"
+                price = yes_price_dollars
+            else:
+                book_side = "ask" if action == "buy" else "bid"
+                price = no_price_dollars
+                if price is not None:
+                    price = f"{1.0 - float(price):.4f}"
+            if price is None:
+                raise ValueError(f"missing price for {action} {side}")
+            return book_side, price
+
+        try:
+            book_side, price = _v2_book_side_and_price()
+            v2_body = {
+                "ticker": ticker,
+                "client_order_id": cid,
+                "side": book_side,
+                "count": f"{count:.2f}",
+                "price": price,
+                "time_in_force": time_in_force,
+                "self_trade_prevention_type": "taker_at_cross",
+                "reduce_only": False,
+                "post_only": False,
+                "cancel_order_on_pause": True,
+            }
+            logger.info(
+                "V2 order %s %s x%d @ %s (book %s)",
+                side.upper(),
+                ticker,
+                count,
+                price,
+                book_side,
+            )
+            return self._request("POST", "/portfolio/events/orders", json=v2_body)
+        except (ValueError, httpx.HTTPStatusError) as exc:
+            logger.warning("V2 order failed (%s), trying legacy /portfolio/orders", exc)
+
+        body: dict[str, Any] = {
             "ticker": ticker,
             "side": side,
             "action": action,
             "count": count,
             "type": order_type,
-            f"{side}_price": price_cents,
+            "client_order_id": cid,
         }
+        if yes_price_dollars is not None:
+            body["yes_price"] = price_cents
+        if no_price_dollars is not None:
+            body["no_price"] = price_cents
         return self._request("POST", "/portfolio/orders", json=body)
 
     @property
