@@ -7,6 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Iterator
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
@@ -43,11 +44,13 @@ class KalshiClient:
         return base64.b64encode(sig).decode()
 
     def _request(self, method: str, path: str, *, params: dict | None = None, json: dict | None = None) -> Any:
+        if not path.startswith("/"):
+            path = f"/{path}"
         url = f"{self.base_url}{path}"
         headers: dict[str, str] = {}
         if self._private_key is not None:
             ts = str(int(time.time() * 1000))
-            sign_path = path.split("?")[0]
+            sign_path = urlparse(url).path
             headers = {
                 "KALSHI-ACCESS-KEY": self.config.kalshi_api_key_id,
                 "KALSHI-ACCESS-TIMESTAMP": ts,
@@ -56,6 +59,9 @@ class KalshiClient:
         resp = self._client.request(method, url, params=params, json=json, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+    def get_balance(self) -> dict:
+        return self._request("GET", "/portfolio/balance")
 
     def iter_markets(self, series_ticker: str, *, status: str = "open") -> Iterator[dict]:
         cursor: str | None = None
@@ -126,10 +132,10 @@ def normalize_market(raw: dict) -> dict:
             except ValueError:
                 continue
 
-    yes_bid = _price_to_float(raw.get("yes_bid"))
-    yes_ask = _price_to_float(raw.get("yes_ask"))
-    no_bid = _price_to_float(raw.get("no_bid"))
-    no_ask = _price_to_float(raw.get("no_ask"))
+    yes_bid = _price_to_float(raw.get("yes_bid_dollars")) or _price_to_float(raw.get("yes_bid"))
+    yes_ask = _price_to_float(raw.get("yes_ask_dollars")) or _price_to_float(raw.get("yes_ask"))
+    no_bid = _price_to_float(raw.get("no_bid_dollars")) or _price_to_float(raw.get("no_bid"))
+    no_ask = _price_to_float(raw.get("no_ask_dollars")) or _price_to_float(raw.get("no_ask"))
 
     return {
         "ticker": raw.get("ticker"),
@@ -147,7 +153,7 @@ def normalize_market(raw: dict) -> dict:
 
 
 def _price_to_float(val: Any) -> float | None:
-    if val is None:
+    if val is None or val == "":
         return None
     if isinstance(val, (int, float)):
         v = float(val)
