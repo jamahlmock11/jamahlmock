@@ -10,30 +10,35 @@ from pathlib import Path
 MIN_EDGE_CENTS = 2.5
 FEE_PER_CONTRACT_CENTS = 1.75
 
+# Model / market constants
+WINDOW_SECONDS = 3600
+SETTLE_AVG_SECONDS = 60
+ANNUALIZE_SECONDS = 365.25 * 24 * 3600
+MOMENTUM_LOOKBACK_SECONDS = 90
+MOMENTUM_WEIGHTS = (0.5, 0.3, 0.2)
+VOL_LOOKBACK_SECONDS = 3600
+VOL_REGIME_LOW = 0.35
+VOL_REGIME_HIGH = 0.80
+FUNDING_SIGNAL_WEIGHT = 0.08
+MEAN_REVERSION_STRENGTH = 0.15
+OBI_LEVELS = 5
+CALIB_MODEL_PATH = str(Path(__file__).resolve().parent / "data" / "calib_model.joblib")
+
 
 @dataclass
 class ModelConfig:
-    """5-layer ensemble parameters."""
+    """5-layer ensemble parameters (mirrors module-level constants)."""
 
-    # GBM / averaging
-    averaging_window_seconds: int = 60
+    averaging_window_seconds: int = SETTLE_AVG_SECONDS
     min_vol: float = 0.05
-
-    # Multi-timeframe momentum weights
-    momentum_w_5m: float = 0.5
-    momentum_w_15m: float = 0.3
-    momentum_w_30m: float = 0.2
-
-    # Funding rate
-    funding_extreme_threshold: float = 0.0005  # 0.05%
-    funding_weight: float = 0.08
-
-    # Mean reversion
-    mr_coefficient: float = 0.15
-
-    # Vol regime thresholds (annualized)
-    vol_low_threshold: float = 0.35
-    vol_high_threshold: float = 0.80
+    momentum_w_5m: float = MOMENTUM_WEIGHTS[0]
+    momentum_w_15m: float = MOMENTUM_WEIGHTS[1]
+    momentum_w_30m: float = MOMENTUM_WEIGHTS[2]
+    funding_extreme_threshold: float = 0.0005
+    funding_weight: float = FUNDING_SIGNAL_WEIGHT
+    mr_coefficient: float = MEAN_REVERSION_STRENGTH
+    vol_low_threshold: float = VOL_REGIME_LOW
+    vol_high_threshold: float = VOL_REGIME_HIGH
     vol_low_weight: float = 1.0
     vol_med_weight: float = 0.85
     vol_high_weight: float = 0.65
@@ -64,7 +69,7 @@ class RiskConfig:
 @dataclass
 class BotConfig:
     series_ticker: str = "KXBTCD"
-    window_seconds: int = 3600
+    window_seconds: int = WINDOW_SECONDS
     cycle_seconds: float = 5.0
     paper: bool = True
 

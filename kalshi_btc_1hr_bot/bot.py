@@ -11,7 +11,7 @@ from kalshi_btc_1hr_bot.config import BotConfig, load_config
 from kalshi_btc_1hr_bot.data_feed import DataFeed
 from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
-from kalshi_btc_1hr_bot.model import HourlyForecastModel
+from kalshi_btc_1hr_bot.model import ForecastModel, forecast_from_market_data
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import setup_logging
@@ -24,7 +24,7 @@ class HourlyBot:
         self.config = config or load_config()
         self.client = KalshiClient(self.config)
         self.feed = DataFeed()
-        self.model = HourlyForecastModel(self.config)
+        self.model = ForecastModel()
         self.risk = RiskManager(self.config)
 
     def close(self) -> None:
@@ -62,7 +62,8 @@ class HourlyBot:
                 scanned += 1
                 ticker = str(market.get("ticker") or "")
 
-                forecast = self.model.forecast(
+                forecast = forecast_from_market_data(
+                    self.model,
                     spot=data.spot,
                     strike=float(strike),
                     seconds_to_expiry=secs,
@@ -114,7 +115,7 @@ class HourlyBot:
                     "price": edge.market_price,
                     "contracts": contracts,
                     "reason": edge.reason if edge.should_trade else block_reason,
-                    "layers": [(l.name, l.probability) for l in forecast.layers],
+                    "layers": forecast.layers,
                 }
                 decisions.append(decision)
 

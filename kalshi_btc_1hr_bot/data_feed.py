@@ -5,13 +5,18 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections import deque
 from dataclasses import dataclass, field
 
 import httpx
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FundingRate:
+    funding_rate: float
+    source: str = "binance"
 
 
 @dataclass
@@ -24,6 +29,8 @@ class MarketData:
     mu_15m: float
     mu_30m: float
     closes_1m: np.ndarray = field(repr=False)
+    price_history: list = field(default_factory=list)
+    funding: FundingRate | None = None
     source: str = "binance"
     timestamp: float = field(default_factory=time.time)
 
@@ -53,6 +60,7 @@ class DataFeed:
         mu_5m = self._momentum(closes, 5)
         mu_15m = self._momentum(closes, 15)
         mu_30m = self._momentum(closes, 30)
+        history = self._build_price_history(closes, spot, now)
 
         self._last = MarketData(
             spot=spot,
@@ -63,6 +71,8 @@ class DataFeed:
             mu_15m=mu_15m,
             mu_30m=mu_30m,
             closes_1m=closes,
+            price_history=history,
+            funding=FundingRate(funding_rate=funding),
             source=source,
             timestamp=now,
         )
@@ -147,6 +157,18 @@ class DataFeed:
             rows = val[-limit:]
             return np.array([float(r[4]) for r in rows], dtype=float)
         raise RuntimeError("kraken ohlc empty")
+
+    @staticmethod
+    def _build_price_history(closes: np.ndarray, spot: float, now: float) -> list:
+        if len(closes) == 0:
+            return [(now, spot)]
+        bar_seconds = 60.0
+        history = [
+            (now - (len(closes) - 1 - i) * bar_seconds, float(closes[i]))
+            for i in range(len(closes))
+        ]
+        history.append((now, spot))
+        return history
 
     @staticmethod
     def _compute_vwap(closes: np.ndarray) -> float:

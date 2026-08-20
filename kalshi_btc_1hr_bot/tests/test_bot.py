@@ -2,27 +2,22 @@
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from kalshi_btc_1hr_bot.config import BotConfig
-from kalshi_btc_1hr_bot.data_feed import MarketData, SyntheticPriceGenerator
+from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData, SyntheticPriceGenerator
 from kalshi_btc_1hr_bot.edge import evaluate_edge, vwap_fill_price
-from kalshi_btc_1hr_bot.model import HourlyForecastModel
+from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import gbm_prob_above, quadratic_fee
 
 
-def _sample_data() -> MarketData:
-    return MarketData(
-        spot=65000.0,
-        vwap=64950.0,
-        funding_rate=0.0001,
-        annualized_vol=0.50,
-        mu_5m=0.001,
-        mu_15m=0.0008,
-        mu_30m=0.0005,
-        closes_1m=np.linspace(64800, 65000, 30),
-    )
+def _sample_history() -> list:
+    now = time.time()
+    prices = np.linspace(64800, 65000, 120)
+    return [(now - (len(prices) - 1 - i) * 60, float(prices[i])) for i in range(len(prices))]
 
 
 def test_gbm_prob_above():
@@ -37,16 +32,20 @@ def test_quadratic_fee():
 
 
 def test_model_forecast():
-    model = HourlyForecastModel()
-    result = model.forecast(
+    model = ForecastModel()
+    state = build_market_state(
         spot=65000,
         strike=64500,
-        seconds_to_expiry=1200,
-        data=_sample_data(),
+        seconds_remaining=1200,
+        price_history=_sample_history(),
+        vwap=64950,
+        funding=FundingRate(0.0001),
     )
-    assert 0 < result.p_fair < 1
-    assert len(result.layers) == 5
-    assert result.confidence > 0
+    result = model.forecast(state)
+    assert 0 < result.p_calibrated < 1
+    assert 0 < result.p_gbm < 1
+    assert result.vol_regime in ("low", "medium", "high")
+    assert len(result.features) == 18
 
 
 def test_edge_calculation():

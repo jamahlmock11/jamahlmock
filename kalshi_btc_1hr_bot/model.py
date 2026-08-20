@@ -1,165 +1,388 @@
-"""5-layer ensemble probability model for KXBTCD hourly contracts."""
+"""Probability model for the 1-HOUR Kalshi KXBTCD bot.
+
+Ensemble approach with 5 signal layers, each contributing to the final
+probability forecast. The longer 1-hour window allows richer signals than
+the 15-minute version:
+
+1. GBM core: lognormal probability with averaging adjustment (same as 15m)
+2. Multi-timeframe momentum: weighted blend of 5m/15m/30m drift
+3. Volatility regime: classify low/med/high vol → adjust confidence
+4. Funding rate signal: BTC perp funding as sentiment proxy
+5. Mean reversion: BTC shows some MR over 1hr — pullback toward VWAP
+
+The final probability is calibrated via logistic regression on backtest data.
+"""
 
 from __future__ import annotations
 
+import logging
 import math
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+from pathlib import Path
 
 import numpy as np
 
-from kalshi_btc_1hr_bot.config import BotConfig, ModelConfig
-from kalshi_btc_1hr_bot.data_feed import MarketData
-from kalshi_btc_1hr_bot.utils import (
-    clamp_prob,
-    effective_vol_for_averaging,
-    gbm_prob_above,
-    sigmoid,
-    years_to_expiry,
-)
+from kalshi_btc_1hr_bot import config
+from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData
+
+log = logging.getLogger("model")
+
+
+def norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 @dataclass
-class LayerOutput:
-    name: str
-    probability: float
-    weight: float
-    detail: str = ""
+class MarketState:
+    current_price: float
+    strike: float
+    seconds_remaining: float
+    seconds_to_avg_start: float
+    price_history: list  # [(timestamp, price), ...]
+    ob_bids: list
+    ob_asks: list
+    now_ts: float = 0.0
+    funding: Optional[FundingRate] = None
+    vwap: float = 0.0  # volume-weighted avg price (0 = not available)
 
 
 @dataclass
-class ForecastResult:
-    p_fair: float
-    p_raw: float
-    confidence: float
-    vol_regime: str
-    layers: list[LayerOutput] = field(default_factory=list)
-    features: dict[str, float] = field(default_factory=dict)
+class ModelOutput:
+    p_above: float
+    p_below: float
+    p_gbm: float  # layer 1: raw GBM
+    p_momentum: float  # layer 2: momentum-adjusted
+    p_funding: float  # layer 3: funding-adjusted
+    p_mean_rev: float  # layer 4: mean-reversion adjusted
+    p_calibrated: float  # layer 5: final calibrated
+    sigma: float
+    mu: float
+    obi: float
+    funding_rate: float
+    vol_regime: str  # "low", "medium", "high"
+    distance_bps: float
+    features: np.ndarray
+
+    @property
+    def p_fair(self) -> float:
+        return self.p_calibrated
+
+    @property
+    def confidence(self) -> float:
+        return {"low": 1.0, "medium": 0.85, "high": 0.65}.get(self.vol_regime, 0.85)
+
+    @property
+    def layers(self) -> list[tuple[str, float]]:
+        return [
+            ("gbm_core", self.p_gbm),
+            ("momentum", self.p_momentum),
+            ("funding", self.p_funding),
+            ("mean_reversion", self.p_mean_rev),
+            ("calibrated", self.p_calibrated),
+        ]
 
 
-class LogisticCalibrator:
-    """Simple logistic calibrator on 18 features (identity-ish weights for demo)."""
+class ForecastModel:
+    """Ensemble probability model for hourly BTC settlement."""
 
     def __init__(self) -> None:
-        self.bias = 0.0
-        self.weights = np.array([
-            1.2, 0.8, 0.5, 0.3, 0.2,  # layer probs + drift
-            0.4, 0.3, 0.2, 0.15, 0.1,  # momentum + funding
-            0.25, 0.2, 0.15, 0.1, 0.05,  # MR + vol
-            0.3, 0.2, 0.1,  # time + moneyness
+        self.calibrator = None
+        self._load_calibrator()
+
+    def _load_calibrator(self) -> None:
+        try:
+            import joblib
+
+            self.calibrator = joblib.load(config.CALIB_MODEL_PATH)
+            log.info("Calibration model loaded")
+        except Exception:
+            log.info("No calibration model — using raw ensemble")
+
+    def forecast(self, state: MarketState) -> ModelOutput:
+        S = state.current_price
+        K = state.strike
+        T = max(state.seconds_to_avg_start, 1.0) / config.ANNUALIZE_SECONDS
+        T_total = max(state.seconds_remaining, 1.0) / config.ANNUALIZE_SECONDS
+        now_ts = state.now_ts if state.now_ts else time.time()
+
+        # ── LAYER 1: GBM core ────────────────────────────────────────────────
+        sigma = self._realized_vol(state.price_history, now_ts=now_ts)
+        mu_gbm = self._momentum(
+            state.price_history,
+            lookback=config.MOMENTUM_LOOKBACK_SECONDS,
+            now_ts=now_ts,
+        )
+
+        avg_factor = self._averaging_factor(
+            seconds_to_avg_start=state.seconds_to_avg_start,
+            avg_window=config.SETTLE_AVG_SECONDS,
+            seconds_remaining=state.seconds_remaining,
+        )
+        sigma_eff = sigma * math.sqrt(avg_factor)
+
+        if sigma_eff > 0 and S > 0 and K > 0:
+            T_mid = T + (config.SETTLE_AVG_SECONDS / 2) / config.ANNUALIZE_SECONDS
+            d2 = (math.log(S / K) + (mu_gbm - 0.5 * sigma_eff**2) * T_mid) / (
+                sigma_eff * math.sqrt(T_mid)
+            )
+            p_gbm = norm_cdf(d2)
+        else:
+            p_gbm = 0.5
+        p_gbm = max(0.001, min(0.999, p_gbm))
+
+        # ── LAYER 2: Multi-timeframe momentum ───────────────────────────────
+        mu_5m = self._momentum(state.price_history, lookback=300, now_ts=now_ts)
+        mu_15m = self._momentum(state.price_history, lookback=900, now_ts=now_ts)
+        mu_30m = self._momentum(state.price_history, lookback=1800, now_ts=now_ts)
+        mu_blend = (
+            mu_5m * config.MOMENTUM_WEIGHTS[0]
+            + mu_15m * config.MOMENTUM_WEIGHTS[1]
+            + mu_30m * config.MOMENTUM_WEIGHTS[2]
+        )
+        if sigma_eff > 0 and S > 0 and K > 0:
+            d2_mom = (math.log(S / K) + (mu_blend - 0.5 * sigma_eff**2) * T_mid) / (
+                sigma_eff * math.sqrt(T_mid)
+            )
+            p_momentum = norm_cdf(d2_mom)
+        else:
+            p_momentum = 0.5
+        p_momentum = max(0.001, min(0.999, p_momentum))
+
+        # ── LAYER 3: Funding rate signal ─────────────────────────────────────
+        funding_rate = 0.0
+        p_funding = p_momentum
+        if state.funding:
+            funding_rate = state.funding.funding_rate
+            if abs(funding_rate) < 0.0005:
+                funding_signal = funding_rate * 5000
+            else:
+                funding_signal = -math.copysign(0.2, funding_rate)
+            funding_adj = config.FUNDING_SIGNAL_WEIGHT * funding_signal * min(1.0, T_total * 10)
+            p_funding = max(0.001, min(0.999, p_momentum + funding_adj))
+
+        # ── LAYER 4: Mean reversion ─────────────────────────────────────────
+        p_mean_rev = p_funding
+        if state.vwap > 0 and S > 0:
+            vwap_dist = (S - state.vwap) / state.vwap
+            mr_pull = -config.MEAN_REVERSION_STRENGTH * vwap_dist * 100 * min(1.0, T_total)
+            p_mean_rev = max(0.001, min(0.999, p_funding + mr_pull))
+
+        # ── Volatility regime classification ────────────────────────────────
+        if sigma < config.VOL_REGIME_LOW:
+            vol_regime = "low"
+        elif sigma > config.VOL_REGIME_HIGH:
+            vol_regime = "high"
+        else:
+            vol_regime = "medium"
+
+        vol_confidence = {"low": 1.0, "medium": 0.85, "high": 0.65}[vol_regime]
+        p_ensemble = 0.5 + (p_mean_rev - 0.5) * vol_confidence
+        p_ensemble = max(0.001, min(0.999, p_ensemble))
+
+        # ── LAYER 5: Calibration ────────────────────────────────────────────
+        obi = self._order_book_imbalance(state.ob_bids, state.ob_asks)
+        distance_bps = abs(S - K) / K * 10_000 if K > 0 else 0
+
+        features = np.array([
+            p_gbm,
+            p_momentum,
+            p_funding,
+            p_mean_rev,
+            p_ensemble,
+            obi,
+            mu_blend,
+            mu_5m,
+            mu_15m,
+            mu_30m,
+            sigma,
+            funding_rate,
+            float(vol_regime == "low"),
+            float(vol_regime == "high"),
+            distance_bps,
+            state.seconds_remaining / config.WINDOW_SECONDS,
+            avg_factor,
+            (S - state.vwap) / state.vwap if state.vwap > 0 else 0.0,
         ])
 
-    def calibrate(self, features: np.ndarray) -> float:
-        z = self.bias + float(np.dot(self.weights[: len(features)], features))
-        return clamp_prob(sigmoid(z))
-
-
-class HourlyForecastModel:
-    """5-layer ensemble: GBM, momentum, funding, mean reversion, vol regime."""
-
-    def __init__(self, config: BotConfig | None = None) -> None:
-        self.config = config or BotConfig()
-        self.model_cfg: ModelConfig = self.config.model
-        self.calibrator = LogisticCalibrator()
-
-    def forecast(
-        self,
-        *,
-        spot: float,
-        strike: float,
-        seconds_to_expiry: float,
-        data: MarketData,
-    ) -> ForecastResult:
-        mc = self.model_cfg
-        t_years = max(seconds_to_expiry, 1.0) / (365.25 * 24 * 3600)
-        t_frac = min(1.0, seconds_to_expiry / self.config.window_seconds)
-
-        # Layer 1: GBM core with averaging adjustment
-        sigma_eff = effective_vol_for_averaging(
-            max(data.annualized_vol, mc.min_vol),
-            mc.averaging_window_seconds,
-        )
-        p_gbm = gbm_prob_above(spot, strike, t_years, sigma_eff, drift=0.0)
-        layer1 = LayerOutput("gbm_core", p_gbm, 0.35, f"σ_eff={sigma_eff:.3f}")
-
-        # Layer 2: Multi-timeframe momentum drift blend
-        mu_blend = (
-            mc.momentum_w_5m * data.mu_5m
-            + mc.momentum_w_15m * data.mu_15m
-            + mc.momentum_w_30m * data.mu_30m
-        )
-        p_mom = gbm_prob_above(spot, strike, t_years, sigma_eff, drift=mu_blend * 365.25 * 24 * 3600)
-        layer2 = LayerOutput("momentum", p_mom, 0.25, f"μ_blend={mu_blend:.6f}")
-
-        # Layer 3: Funding rate signal
-        funding = data.funding_rate
-        funding_adj = self._funding_adjustment(funding, t_frac)
-        p_fund = clamp_prob(p_gbm + funding_adj)
-        layer3 = LayerOutput("funding", p_fund, 0.15, f"rate={funding:.5f}")
-
-        # Layer 4: Mean reversion toward VWAP
-        if data.vwap > 0:
-            mr_pull = -mc.mr_coefficient * (spot - data.vwap) / data.vwap * 100 * t_frac
-            mr_pull = mr_pull / 100.0  # convert to probability units
+        if self.calibrator is not None:
+            try:
+                p_calibrated = float(self.calibrator.predict_proba(features.reshape(1, -1))[0, 1])
+            except Exception:
+                p_calibrated = p_ensemble
         else:
-            mr_pull = 0.0
-        p_mr = clamp_prob(p_gbm + mr_pull)
-        layer4 = LayerOutput("mean_reversion", p_mr, 0.15, f"pull={mr_pull:.4f}")
+            p_calibrated = p_ensemble
 
-        # Layer 5: Volatility regime
-        regime, regime_weight = self._vol_regime(data.annualized_vol)
-        layers = [layer1, layer2, layer3, layer4]
-        wsum = sum(l.weight for l in layers)
-        p_blend = sum(l.probability * l.weight for l in layers) / wsum
-        p_regime = clamp_prob(0.5 + regime_weight * (p_blend - 0.5))
-        layer5 = LayerOutput("vol_regime", p_regime, 0.10, f"regime={regime}")
-        layers.append(layer5)
+        p_calibrated = max(0.001, min(0.999, p_calibrated))
 
-        # Feature vector for logistic calibration (18 features)
-        moneyness = math.log(spot / strike) if strike > 0 else 0.0
-        features = np.array([
-            p_gbm, p_mom, p_fund, p_mr, p_regime,
-            mu_blend, data.mu_5m, data.mu_15m, data.mu_30m, funding,
-            mr_pull, sigma_eff, data.annualized_vol, regime_weight, t_frac,
-            moneyness, spot / strike if strike > 0 else 1.0, seconds_to_expiry / 3600.0,
-        ], dtype=float)
-
-        p_calibrated = self.calibrator.calibrate(features)
-        confidence = self._confidence(layers, data.annualized_vol, regime)
-
-        return ForecastResult(
-            p_fair=p_calibrated,
-            p_raw=p_blend,
-            confidence=confidence,
-            vol_regime=regime,
-            layers=layers,
-            features={f"f{i}": float(v) for i, v in enumerate(features)},
+        return ModelOutput(
+            p_above=p_calibrated,
+            p_below=1 - p_calibrated,
+            p_gbm=p_gbm,
+            p_momentum=p_momentum,
+            p_funding=p_funding,
+            p_mean_rev=p_mean_rev,
+            p_calibrated=p_calibrated,
+            sigma=sigma,
+            mu=mu_blend,
+            obi=obi,
+            funding_rate=funding_rate,
+            vol_regime=vol_regime,
+            distance_bps=distance_bps,
+            features=features,
         )
 
-    def _funding_adjustment(self, funding: float, t_frac: float) -> float:
-        mc = self.model_cfg
-        # Extreme funding → contrarian
-        if abs(funding) > mc.funding_extreme_threshold:
-            direction = -1.0 if funding > 0 else 1.0
-            magnitude = min(abs(funding) / mc.funding_extreme_threshold, 2.0)
-            return direction * mc.funding_weight * magnitude * (1.0 - t_frac)
-        # Normal funding → sentiment
-        return funding * mc.funding_weight * 100 * (1.0 - t_frac)
+    def _realized_vol(
+        self,
+        price_history: list,
+        lookback: int = config.VOL_LOOKBACK_SECONDS,
+        now_ts: float = 0.0,
+    ) -> float:
+        if now_ts == 0:
+            now_ts = time.time()
+        if len(price_history) < 10:
+            return 0.5
+        cutoff = now_ts - lookback
+        prices = [(t, p) for t, p in price_history if t >= cutoff]
+        if len(prices) < 10:
+            return 0.5
+        log_returns = []
+        for i in range(1, len(prices)):
+            if prices[i][1] > 0 and prices[i - 1][1] > 0:
+                log_returns.append(math.log(prices[i][1] / prices[i - 1][1]))
+        if len(log_returns) < 5:
+            return 0.5
+        arr = np.array(log_returns)
+        vol = float(np.std(arr, ddof=1)) * math.sqrt(config.ANNUALIZE_SECONDS)
+        return max(0.1, min(3.0, vol))
 
-    def _vol_regime(self, vol: float) -> tuple[str, float]:
-        mc = self.model_cfg
-        if vol < mc.vol_low_threshold:
-            return "low", mc.vol_low_weight
-        if vol > mc.vol_high_threshold:
-            return "high", mc.vol_high_weight
-        return "medium", mc.vol_med_weight
+    def _momentum(self, price_history: list, lookback: int, now_ts: float = 0.0) -> float:
+        if now_ts == 0:
+            now_ts = time.time()
+        if len(price_history) < 5:
+            return 0.0
+        cutoff = now_ts - lookback
+        prices = [(t, p) for t, p in price_history if t >= cutoff]
+        if len(prices) < 5:
+            return 0.0
+        dt = prices[-1][0] - prices[0][0]
+        if dt <= 0 or prices[0][1] <= 0:
+            return 0.0
+        log_ret = math.log(prices[-1][1] / prices[0][1])
+        mu = (log_ret / dt) * config.ANNUALIZE_SECONDS
+        return max(-5.0, min(5.0, mu))
 
-    @staticmethod
-    def _confidence(layers: list[LayerOutput], vol: float, regime: str) -> float:
-        probs = [l.probability for l in layers]
-        spread = max(probs) - min(probs)
-        score = 1.0 - min(spread * 2.0, 0.5)
-        if regime == "high":
-            score *= 0.75
-        elif regime == "medium":
-            score *= 0.90
-        return max(0.0, min(1.0, score))
+    def _order_book_imbalance(self, bids: list, asks: list, levels: int = config.OBI_LEVELS) -> float:
+        bid_vol = sum(b[1] for b in bids[:levels]) if bids else 0
+        ask_vol = sum(a[1] for a in asks[:levels]) if asks else 0
+        total = bid_vol + ask_vol
+        if total == 0:
+            return 0.0
+        return (bid_vol - ask_vol) / total
+
+    def _averaging_factor(
+        self,
+        seconds_to_avg_start: float,
+        avg_window: float,
+        seconds_remaining: float,
+    ) -> float:
+        """60-sec averaging reduces effective vol (same as 15m bot)."""
+        if seconds_to_avg_start > 0:
+            return min(1.0, math.sqrt(avg_window / 12) / math.sqrt(avg_window) + 0.85)
+        elapsed_in_avg = avg_window - seconds_remaining
+        if elapsed_in_avg <= 0:
+            return 0.05
+        frac_remaining = max(0.05, seconds_remaining / avg_window)
+        return frac_remaining
+
+
+class CalibratedPipeline:
+    """Wraps StandardScaler + LogisticRegression. Must be module-level for joblib."""
+
+    def __init__(self, scaler, model):
+        self.scaler = scaler
+        self.model = model
+
+    def predict_proba(self, X):
+        X_scaled = self.scaler.transform(X)
+        return self.model.predict_proba(X_scaled)
+
+
+def train_calibrator(features: np.ndarray, labels: np.ndarray) -> object:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    import joblib
+
+    scaler = StandardScaler()
+    X = scaler.fit_transform(features)
+
+    model = LogisticRegression(C=1.0, class_weight="balanced", max_iter=1000)
+    model.fit(X, labels)
+
+    calibrator = CalibratedPipeline(scaler, model)
+    Path(config.CALIB_MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(calibrator, config.CALIB_MODEL_PATH)
+    log.info("Calibration model saved to %s", config.CALIB_MODEL_PATH)
+    return calibrator
+
+
+def seconds_to_avg_start(seconds_remaining: float) -> float:
+    if seconds_remaining > config.SETTLE_AVG_SECONDS:
+        return seconds_remaining - config.SETTLE_AVG_SECONDS
+    return 0.0
+
+
+def build_market_state(
+    *,
+    spot: float,
+    strike: float,
+    seconds_remaining: float,
+    price_history: list,
+    vwap: float = 0.0,
+    funding: FundingRate | None = None,
+    ob_bids: list | None = None,
+    ob_asks: list | None = None,
+    now_ts: float | None = None,
+) -> MarketState:
+    return MarketState(
+        current_price=spot,
+        strike=strike,
+        seconds_remaining=seconds_remaining,
+        seconds_to_avg_start=seconds_to_avg_start(seconds_remaining),
+        price_history=price_history,
+        ob_bids=ob_bids or [],
+        ob_asks=ob_asks or [],
+        now_ts=now_ts or time.time(),
+        funding=funding,
+        vwap=vwap,
+    )
+
+
+def forecast_from_market_data(
+    model: ForecastModel,
+    *,
+    spot: float,
+    strike: float,
+    seconds_to_expiry: float,
+    data: MarketData,
+    ob_bids: list | None = None,
+    ob_asks: list | None = None,
+) -> ModelOutput:
+    state = build_market_state(
+        spot=spot,
+        strike=strike,
+        seconds_remaining=seconds_to_expiry,
+        price_history=data.price_history,
+        vwap=data.vwap,
+        funding=data.funding,
+        ob_bids=ob_bids,
+        ob_asks=ob_asks,
+        now_ts=data.timestamp,
+    )
+    return model.forecast(state)
+
+
+# Backwards-compatible alias
+HourlyForecastModel = ForecastModel

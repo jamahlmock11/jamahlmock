@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from kalshi_btc_1hr_bot.config import BotConfig, load_config
-from kalshi_btc_1hr_bot.data_feed import MarketData, SyntheticPriceGenerator
+from kalshi_btc_1hr_bot.data_feed import FundingRate, MarketData, SyntheticPriceGenerator
 from kalshi_btc_1hr_bot.edge import evaluate_edge
-from kalshi_btc_1hr_bot.model import HourlyForecastModel
+from kalshi_btc_1hr_bot.model import ForecastModel, build_market_state
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.utils import setup_logging
 
@@ -56,28 +56,27 @@ def _synthetic_market_data(
     entry_idx: int,
     funding: float,
 ) -> MarketData:
-    closes = path[max(0, entry_idx - 30) : entry_idx + 1]
-    if len(closes) < 2:
-        closes = path[: entry_idx + 1]
-    rets = np.diff(np.log(closes)) if len(closes) > 1 else np.array([0.0])
-    vol = float(np.std(rets)) * np.sqrt(525600) if len(rets) > 1 else 0.5
-    vol = max(vol, 0.05)
-
-    def mom(bars: int) -> float:
-        if len(closes) < bars + 1:
-            return 0.0
-        prev = closes[-1 - bars]
-        return float((closes[-1] - prev) / prev) if prev > 0 else 0.0
+    segment = path[max(0, entry_idx - 1800) : entry_idx + 1]
+    if len(segment) < 2:
+        segment = path[: entry_idx + 1]
+    now = float(entry_idx)
+    bar_seconds = 1.0
+    history = [(now - (len(segment) - 1 - i) * bar_seconds, float(segment[i])) for i in range(len(segment))]
+    spot = float(segment[-1])
+    vwap = float(np.mean(segment))
 
     return MarketData(
-        spot=float(closes[-1]),
-        vwap=float(np.mean(closes)),
+        spot=spot,
+        vwap=vwap,
         funding_rate=funding,
-        annualized_vol=vol,
-        mu_5m=mom(min(5, len(closes) - 1)),
-        mu_15m=mom(min(15, len(closes) - 1)),
-        mu_30m=mom(min(30, len(closes) - 1)),
-        closes_1m=closes,
+        annualized_vol=0.5,
+        mu_5m=0.0,
+        mu_15m=0.0,
+        mu_30m=0.0,
+        closes_1m=segment[-60:] if len(segment) >= 60 else segment,
+        price_history=history,
+        funding=FundingRate(funding_rate=funding),
+        timestamp=now,
     )
 
 
@@ -88,7 +87,7 @@ def run_synthetic_backtest(
     config: BotConfig | None = None,
 ) -> BacktestReport:
     cfg = config or load_config()
-    model = HourlyForecastModel(cfg)
+    model = ForecastModel()
     gen = SyntheticPriceGenerator(seed=seed)
     report = BacktestReport(markets_simulated=n_markets)
 
@@ -105,10 +104,15 @@ def run_synthetic_backtest(
         data = _synthetic_market_data(path, entry_idx, funding)
 
         forecast = model.forecast(
-            spot=data.spot,
-            strike=strike,
-            seconds_to_expiry=secs_left,
-            data=data,
+            build_market_state(
+                spot=data.spot,
+                strike=strike,
+                seconds_remaining=secs_left,
+                price_history=data.price_history,
+                vwap=data.vwap,
+                funding=data.funding,
+                now_ts=data.timestamp,
+            )
         )
 
         # Synthetic market price: fair + noise
