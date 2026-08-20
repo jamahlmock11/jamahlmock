@@ -37,25 +37,25 @@ gates:
   yes_alignment_min_forecast: 0.50
   no_alignment_min_crowd_pct: 0.52
 
-# Time-bucket edge floors (strategy tightens/loosens by minutes remaining)
+# Time-bucket edge floors (aligned with code defaults — was ~3–4¢ higher)
 time_buckets:
   "15_10":
-    min_net_edge_dollars: 0.18
-    min_raw_edge_dollars: 0.22
+    min_net_edge_dollars: 0.14
+    min_raw_edge_dollars: 0.18
     size_multiplier: 0.60
   "10_7":
-    min_net_edge_dollars: 0.15
-    min_raw_edge_dollars: 0.19
+    min_net_edge_dollars: 0.12
+    min_raw_edge_dollars: 0.16
     size_multiplier: 0.75
   "7_5":
-    min_net_edge_dollars: 0.13
-    min_raw_edge_dollars: 0.17
+    min_net_edge_dollars: 0.10
+    min_raw_edge_dollars: 0.14
     size_multiplier: 0.85
   "5_3":
-    min_net_edge_dollars: 0.11
-    min_raw_edge_dollars: 0.15
+    min_net_edge_dollars: 0.08
+    min_raw_edge_dollars: 0.12
     size_multiplier: 1.0
   "3_1":
-    min_net_edge_dollars: 0.09
-    min_raw_edge_dollars: 0.13
+    min_net_edge_dollars: 0.06
+    min_raw_edge_dollars: 0.10
     size_multiplier: 0.70
