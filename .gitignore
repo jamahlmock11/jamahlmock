@@ -18,3 +18,4 @@ secrets/
 .DS_Store
 data/logs/
 *.db
+kalshi_btc_1hr_bot/data/

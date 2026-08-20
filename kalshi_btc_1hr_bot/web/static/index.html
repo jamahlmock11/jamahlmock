@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KXBTCD · 1-Hour Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="bg-glow bg-glow-a"></div>
+  <div class="bg-glow bg-glow-b"></div>
+
+  <!-- FLASHING STATUS BANNER -->
+  <section id="status-banner" class="status-banner status-red flash">
+    <div class="status-inner">
+      <div id="status-light" class="status-light"></div>
+      <div class="status-text">
+        <div id="status-headline" class="status-headline">WAITING FOR SCAN</div>
+        <div id="status-detail" class="status-detail">Connecting to bot…</div>
+      </div>
+      <div class="status-meta">
+        <div id="status-readiness" class="status-readiness">0%</div>
+        <div class="status-readiness-label">READY</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOP 4 PRICE PICKS -->
+  <section class="top4-section">
+    <div class="top4-head">
+      <h2>Top 4 Prices to Choose From</h2>
+      <span id="top4-updated" class="top4-updated">—</span>
+    </div>
+    <div id="top4-grid" class="top4-grid">
+      <div class="top4-card empty">Waiting for scan…</div>
+    </div>
+  </section>
+
+  <header class="hero">
+    <div class="hero-left">
+      <div class="eyebrow">Kalshi · KXBTCD Hourly BTC</div>
+      <h1>1-Hour <span class="accent">Command Center</span></h1>
+      <p class="tagline">Live edge, evidence gates, and trade journal</p>
+    </div>
+    <div class="hero-right">
+      <div id="mode-badge" class="mode-badge paper">PAPER</div>
+      <div id="cycle-badge" class="cycle-badge">WAITING</div>
+      <div id="conn-dot" class="conn-dot offline"></div>
+      <div id="meta-line" class="meta-line">Connecting…</div>
+    </div>
+  </header>
+
+  <section class="stats-strip">
+    <div class="stat-card">
+      <div class="stat-label">BRTI Spot</div>
+      <div id="stat-spot" class="stat-value">—</div>
+      <div id="stat-brti" class="stat-sub">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Balance</div>
+      <div id="stat-balance" class="stat-value">—</div>
+      <div id="stat-bankroll" class="stat-sub">max $1/trade</div>
+    </div>
+    <div class="stat-card highlight">
+      <div class="stat-label">Trade Readiness</div>
+      <div id="stat-readiness" class="stat-value">0%</div>
+      <div class="readiness-bar"><div id="readiness-fill" class="readiness-fill"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div id="stat-winrate" class="stat-value">—</div>
+      <div id="stat-record" class="stat-sub">0W / 0L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div id="stat-pnl" class="stat-value pnl-neutral">$0.00</div>
+      <div id="stat-trades" class="stat-sub">0 trades</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Markets Scanned</div>
+      <div id="stat-markets" class="stat-value">0</div>
+      <div id="stat-vol" class="stat-sub">vol —</div>
+    </div>
+  </section>
+
+  <main class="layout">
+    <section class="panel panel-best">
+      <div class="panel-head">
+        <h2>Best Opportunity</h2>
+        <span id="best-action" class="pill pill-idle">NO TRADE</span>
+      </div>
+      <div id="best-detail" class="best-detail">
+        <div class="empty-state">Waiting for bot scan…</div>
+      </div>
+      <div id="blockers" class="blockers"></div>
+    </section>
+
+    <section class="panel panel-checklist">
+      <div class="panel-head"><h2>Trade Gates</h2></div>
+      <ul id="checklist" class="checklist"></ul>
+    </section>
+
+    <section class="panel panel-votes span-2">
+      <div class="panel-head">
+        <h2>Crowd Forecast Ensemble</h2>
+        <span id="crowd-quorum" class="panel-note">quorum —</span>
+      </div>
+      <div id="crowd-summary" class="crowd-summary"></div>
+      <div id="votes-grid" class="votes-grid crowd-grid"></div>
+    </section>
+
+    <section class="panel panel-markets span-2">
+      <div class="panel-head">
+        <h2>Top Markets by Edge</h2>
+        <span class="panel-note">Top 4 · evidence-ranked pick highlighted</span>
+      </div>
+      <div class="table-wrap">
+        <table id="markets-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Ticker</th><th>T-rem</th><th>Strike</th><th>Finish</th>
+              <th>Edge</th><th>Evidence</th><th>Model</th><th>Ask</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel panel-trades span-2">
+      <div class="panel-head">
+        <h2>Trade Journal</h2>
+        <span class="panel-note">Executed · blocked · wins &amp; losses</span>
+      </div>
+      <div class="table-wrap">
+        <table id="trades-table">
+          <thead>
+            <tr>
+              <th>Time (UTC)</th><th>Ticker</th><th>Side</th><th>Qty</th><th>Price</th>
+              <th>Cost</th><th>Edge</th><th>Passed</th><th>Outcome</th><th>P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel panel-cycles span-2">
+      <div class="panel-head"><h2>Scan Cycle Log</h2></div>
+      <div class="table-wrap">
+        <table id="cycles-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Status</th><th>Markets</th><th>Best</th><th>Action</th>
+              <th>Readiness</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="thresholds-line">Thresholds loading…</span>
+    <span id="updated-line">—</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
