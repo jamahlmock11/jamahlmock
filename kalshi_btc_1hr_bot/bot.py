@@ -22,6 +22,7 @@ from kalshi_btc_1hr_bot.evidence import (
     select_best_from_top_markets,
 )
 from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data, agreement_score_for_gates
+from kalshi_btc_1hr_bot.kalshi_card import select_kalshi_card_markets
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.notifications import NotifyConfig, PhoneNotifier
 from kalshi_btc_1hr_bot.risk import RiskManager
@@ -73,13 +74,117 @@ class HourlyBot:
         self.feed.close()
         self.notifier.close()
 
+    def _evaluate_market(
+        self,
+        *,
+        market: dict,
+        data: Any,
+        secs: float,
+        strike: float,
+        ticker: str,
+    ) -> MarketCandidate:
+        forecast = forecast_ensemble_from_market_data(
+            self.ensemble,
+            spot=data.spot,
+            strike=float(strike),
+            seconds_to_expiry=secs,
+            data=data,
+        )
+        direction = directional_evidence(forecast.votes)
+
+        yes_ask = market.get("yes_ask")
+        no_ask = market.get("no_ask")
+        yes_ask_f = float(yes_ask) if yes_ask is not None else 1.0
+        no_ask_f = float(no_ask) if no_ask is not None else 1.0
+        yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
+        no_bid_f = float(market.get("no_bid") or no_ask_f)
+
+        side_prob = forecast.crowd.side_prob(direction.side)
+        agree_score = agreement_score_for_gates(
+            forecast, use_ensemble=self.config.gates.use_ensemble_agreement
+        )
+        thresholds = resolve_dynamic_thresholds(
+            secs,
+            vol_regime=forecast.vol_regime,
+            agreement_score=agree_score,
+            crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
+        )
+        aligned = apply_dynamic_thresholds(
+            forecast,
+            thresholds,
+            direction.side,
+            crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+            use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+        )
+        edge_fee = gate_fee_cents(
+            self.config.edge.fee_per_contract_cents,
+            subtract=self.config.edge.subtract_fees_from_edge,
+        )
+        edge = evaluate_edge_with_evidence(
+            aligned.p_fair,
+            yes_ask_f,
+            no_ask_f,
+            yes_bid_f,
+            no_bid_f,
+            direction,
+            fee_cents=edge_fee,
+            subtract_fees=self.config.edge.subtract_fees_from_edge,
+            crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+            use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+            thresholds=thresholds,
+            forecast=aligned,
+        )
+        edge_pass_threshold = config.GATE_ABS_MIN_EDGE_CENTS
+        if edge.edge_cents >= edge_pass_threshold and not edge.should_trade:
+            thresholds = resolve_dynamic_thresholds(
+                secs,
+                vol_regime=forecast.vol_regime,
+                agreement_score=agree_score,
+                edge_cents=edge.edge_cents,
+                crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
+            )
+            aligned = apply_dynamic_thresholds(
+                forecast,
+                thresholds,
+                direction.side,
+                crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+            )
+            edge = evaluate_edge_with_evidence(
+                aligned.p_fair,
+                yes_ask_f,
+                no_ask_f,
+                yes_bid_f,
+                no_bid_f,
+                direction,
+                fee_cents=edge_fee,
+                subtract_fees=self.config.edge.subtract_fees_from_edge,
+                crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+                thresholds=thresholds,
+                forecast=aligned,
+            )
+
+        return MarketCandidate(
+            ticker=ticker,
+            strike=float(strike),
+            secs_left=secs,
+            forecast=aligned,
+            direction=direction,
+            edge=edge,
+            evidence_score=evidence_score(direction, aligned),
+            market=market,
+            thresholds=thresholds,
+        )
+
     def run_cycle(self) -> list[dict]:
-        """Scan KXBTCD markets, rank top 4 by edge, trade the strongest evidence pick."""
+        """Scan KXBTCD, evaluate Kalshi card strikes only, trade best of top 3."""
         self._sync_live_sizing()
         now = datetime.now(timezone.utc)
         data = self.feed.refresh()
         candidates: list[MarketCandidate] = []
         decisions: list[dict] = []
+        window_markets: list[dict[str, Any]] = []
         scanned = 0
 
         try:
@@ -98,113 +203,50 @@ class HourlyBot:
                 if secs > self.config.risk.max_seconds_to_expiry:
                     continue
 
-                yes_ask = market.get("yes_ask")
-                no_ask = market.get("no_ask")
-                if yes_ask is None and no_ask is None:
+                if market.get("yes_ask") is None and market.get("no_ask") is None:
                     continue
 
-                scanned += 1
-                ticker = str(market.get("ticker") or "")
+                window_markets.append(
+                    {
+                        "ticker": str(market.get("ticker") or ""),
+                        "strike": float(strike),
+                        "secs_left": secs,
+                        "close_time": close,
+                        "market": market,
+                    }
+                )
 
-                forecast = forecast_ensemble_from_market_data(
-                    self.ensemble,
-                    spot=data.spot,
-                    strike=float(strike),
-                    seconds_to_expiry=secs,
+            scanned = len(window_markets)
+            if self.config.gates.kalshi_card_only:
+                card_rows = select_kalshi_card_markets(
+                    window_markets,
+                    data.spot,
+                    n=self.config.gates.kalshi_card_picks,
+                )
+                logger.info(
+                    "Kalshi card top %d @ spot $%.0f: %s",
+                    len(card_rows),
+                    data.spot,
+                    ", ".join(f"${r['strike']:,.0f}" for r in card_rows),
+                )
+            else:
+                card_rows = window_markets
+
+            for row in card_rows:
+                cand = self._evaluate_market(
+                    market=row["market"],
                     data=data,
+                    secs=row["secs_left"],
+                    strike=row["strike"],
+                    ticker=row["ticker"],
                 )
-
-                direction = directional_evidence(forecast.votes)
-
-                yes_ask_f = float(yes_ask) if yes_ask is not None else 1.0
-                no_ask_f = float(no_ask) if no_ask is not None else 1.0
-                yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
-                no_bid_f = float(market.get("no_bid") or no_ask_f)
-
-                side_prob = forecast.crowd.side_prob(direction.side)
-                agree_score = agreement_score_for_gates(
-                    forecast, use_ensemble=self.config.gates.use_ensemble_agreement
-                )
-                thresholds = resolve_dynamic_thresholds(
-                    secs,
-                    vol_regime=forecast.vol_regime,
-                    agreement_score=agree_score,
-                    crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
-                )
-                aligned = apply_dynamic_thresholds(
-                    forecast,
-                    thresholds,
-                    direction.side,
-                    crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
-                    use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
-                )
-                edge_fee = gate_fee_cents(
-                    self.config.edge.fee_per_contract_cents,
-                    subtract=self.config.edge.subtract_fees_from_edge,
-                )
-                edge = evaluate_edge_with_evidence(
-                    aligned.p_fair,
-                    yes_ask_f,
-                    no_ask_f,
-                    yes_bid_f,
-                    no_bid_f,
-                    direction,
-                    fee_cents=edge_fee,
-                    subtract_fees=self.config.edge.subtract_fees_from_edge,
-                    crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
-                    use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
-                    thresholds=thresholds,
-                    forecast=aligned,
-                )
-                # Edge-aware re-tune: strong gross edge can unlock slightly lower complementary gates
-                edge_pass_threshold = config.GATE_ABS_MIN_EDGE_CENTS
-                if edge.edge_cents >= edge_pass_threshold and not edge.should_trade:
-                    thresholds = resolve_dynamic_thresholds(
-                        secs,
-                        vol_regime=forecast.vol_regime,
-                        agreement_score=agree_score,
-                        edge_cents=edge.edge_cents,
-                        crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
-                    )
-                    aligned = apply_dynamic_thresholds(
-                        forecast,
-                        thresholds,
-                        direction.side,
-                        crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
-                        use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
-                    )
-                    edge = evaluate_edge_with_evidence(
-                        aligned.p_fair,
-                        yes_ask_f,
-                        no_ask_f,
-                        yes_bid_f,
-                        no_bid_f,
-                        direction,
-                        fee_cents=edge_fee,
-                        subtract_fees=self.config.edge.subtract_fees_from_edge,
-                        crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
-                        use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
-                        thresholds=thresholds,
-                        forecast=aligned,
-                    )
-
-                candidates.append(
-                    MarketCandidate(
-                        ticker=ticker,
-                        strike=float(strike),
-                        secs_left=secs,
-                        forecast=aligned,
-                        direction=direction,
-                        edge=edge,
-                        evidence_score=evidence_score(direction, aligned),
-                        market=market,
-                        thresholds=thresholds,
-                    )
-                )
+                candidates.append(cand)
         except Exception:
             logger.exception("market scan failed")
+            scanned = len(window_markets)
 
-        best = select_best_from_top_markets(candidates)
+        pick_n = min(self.config.gates.kalshi_card_picks, config.TOP_N_MARKETS)
+        best = select_best_from_top_markets(candidates, n=pick_n)
         best_ticker = best.ticker if best else None
 
         for cand in candidates:
@@ -247,7 +289,7 @@ class HourlyBot:
 
             reason = cand.edge.reason
             if not is_pick and cand.edge.should_trade:
-                reason = "not top-4 evidence pick"
+                reason = f"not top-{pick_n} Kalshi card pick"
             elif not cand.edge.should_trade:
                 reason = cand.edge.reason
             elif not allowed:
@@ -305,7 +347,10 @@ class HourlyBot:
                 data.is_official,
             )
         elif best is None:
-            logger.info("NO TRADE — no candidate cleared edge + evidence from top %d", len(candidates))
+            logger.info(
+                "NO TRADE — no Kalshi card pick cleared edge + evidence from %d strikes",
+                len(candidates),
+            )
 
         self._publish_dashboard(
             data=data,

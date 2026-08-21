@@ -225,9 +225,9 @@ def test_select_best_from_top_markets():
         _cand("D", 4.0, 0.40),
         _cand("E", 7.0, 0.05),
     ]
-    best = select_best_from_top_markets(cands, n=4)
+    best = select_best_from_top_markets(cands, n=3)
     assert best is not None
-    # Top 4 by edge: E, B, C, A — highest evidence among those is C
+    # Top 3 by edge: E, B, C — highest evidence among those is C
     assert best.ticker == "C"
 
 

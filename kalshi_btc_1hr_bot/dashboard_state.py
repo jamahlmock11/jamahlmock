@@ -218,9 +218,9 @@ def build_checklist(
         gate_items
         + [
             CheckItem(
-                "Top-4 market by edge + evidence pick",
+                f"Top-{cfg.gates.kalshi_card_picks} Kalshi card pick",
                 is_pick and gate_cand.edge.should_trade,
-                "Selected as best among top markets" if is_pick else "Not the evidence winner",
+                "Selected as best among Kalshi card strikes" if is_pick else "Not the card winner",
                 "selection",
             ),
             CheckItem("Risk gate", allowed, block_reason if not allowed else "ok", "risk"),
@@ -701,6 +701,8 @@ def build_snapshot(
             "dynamic_gates": True,
             "crowd_gates_enabled": cfg.gates.crowd_gates_enabled,
             "use_ensemble_agreement": cfg.gates.use_ensemble_agreement,
+            "kalshi_card_only": cfg.gates.kalshi_card_only,
+            "kalshi_card_picks": cfg.gates.kalshi_card_picks,
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,

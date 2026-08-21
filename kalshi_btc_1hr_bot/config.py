@@ -60,7 +60,9 @@ CROWD_PERFORMANCE_PATH = str(Path(__file__).resolve().parent / "data" / "crowd_p
 
 # Top-N selection: evidence from top votes, best market from top opportunities
 TOP_N_VOTES = 4
-TOP_N_MARKETS = 4
+TOP_N_MARKETS = 3
+KALSHI_CARD_PICKS = 3  # only trade strikes shown on Kalshi's hourly card
+KALSHI_CARD_ONLY = True
 MIN_EVIDENCE_MARGIN = 0.02
 
 
@@ -138,6 +140,8 @@ class GateConfig:
     crowd_gates_enabled: bool = CROWD_GATES_ENABLED
     use_ensemble_agreement: bool = USE_ENSEMBLE_AGREEMENT
     dynamic_gates_enabled: bool = DYNAMIC_GATES_ENABLED
+    kalshi_card_only: bool = KALSHI_CARD_ONLY
+    kalshi_card_picks: int = KALSHI_CARD_PICKS
 
 
 @dataclass
@@ -199,6 +203,10 @@ def load_config() -> BotConfig:
     cfg.gates.dynamic_gates_enabled = os.getenv(
         "DYNAMIC_GATES_ENABLED", "true" if DYNAMIC_GATES_ENABLED else "false"
     ).lower() in ("true", "1", "yes")
+    cfg.gates.kalshi_card_only = os.getenv(
+        "KALSHI_CARD_ONLY", "true" if KALSHI_CARD_ONLY else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.gates.kalshi_card_picks = int(os.getenv("KALSHI_CARD_PICKS", str(KALSHI_CARD_PICKS)))
     cfg.edge.subtract_fees_from_edge = os.getenv(
         "SUBTRACT_FEES_FROM_EDGE", "false" if not SUBTRACT_FEES_FROM_EDGE else "true"
     ).lower() in ("true", "1", "yes")

@@ -62,7 +62,7 @@
     $("top4-updated").textContent = snap.updated_at ? "Updated " + snap.updated_at.slice(11, 19) + " UTC" : "—";
 
     if (!rows.length) {
-      grid.innerHTML = '<div class="top4-card empty">No markets in window — waiting for bot scan…</div>';
+      grid.innerHTML = '<div class="top4-card empty">No Kalshi card strikes in window — waiting for bot scan…</div>';
       return;
     }
 
@@ -311,7 +311,7 @@
     $("thresholds-line").textContent =
       (th.bucket_label ? th.bucket_label + " · " : "") +
       "Edge ≥ " + edgeTxt + " · Crowd ≥ " + crowdTxt + " · Evidence ≥ " + (th.min_evidence_margin || "?") +
-      " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Top " + (th.top_n_markets || 4) + " markets";
+      " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Kalshi card " + (th.kalshi_card_picks || th.top_n_markets || 3);
     $("updated-line").textContent = snap.updated_at ? "Updated " + snap.updated_at : "No scan yet";
   }
 
