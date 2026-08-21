@@ -41,6 +41,8 @@ class HourlyBot:
         self.risk = RiskManager(self.config)
         self.journal = TradeJournal()
         self.notifier = PhoneNotifier(self.config.notify)
+        if not self.config.paper and self.config.sizing.use_live_balance:
+            self._sync_live_sizing()
 
     def _balance_usd(self) -> float | None:
         if not self.client.authenticated:
