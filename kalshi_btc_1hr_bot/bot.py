@@ -22,6 +22,7 @@ from kalshi_btc_1hr_bot.evidence import (
 )
 from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
+from kalshi_btc_1hr_bot.notifications import NotifyConfig, PhoneNotifier
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.trade_journal import TradeJournal
@@ -38,6 +39,7 @@ class HourlyBot:
         self.ensemble = ForecastEnsemble()
         self.risk = RiskManager(self.config)
         self.journal = TradeJournal()
+        self.notifier = PhoneNotifier(self.config.notify)
 
     def _balance_usd(self) -> float | None:
         if not self.client.authenticated:
@@ -55,6 +57,7 @@ class HourlyBot:
     def close(self) -> None:
         self.client.close()
         self.feed.close()
+        self.notifier.close()
 
     def run_cycle(self) -> list[dict]:
         """Scan KXBTCD markets, rank top 4 by edge, trade the strongest evidence pick."""
@@ -268,6 +271,13 @@ class HourlyBot:
             settlements = self.journal.poll_settlements(self.client)
             for item in settlements:
                 outcome_yes = str(item.get("result", "")).lower() == "yes"
+                self.notifier.notify_settlement(
+                    ticker=str(item.get("ticker") or ""),
+                    side=str(item.get("side") or ""),
+                    won=bool(item.get("won")),
+                    pnl=float(item.get("pnl") or 0.0),
+                    result=str(item.get("result") or ""),
+                )
                 # Update crowd adaptive weights when we know outcome
                 for cand in candidates:
                     if cand.ticker == item.get("ticker"):
@@ -352,6 +362,15 @@ class HourlyBot:
                 spot=float(meta.get("spot", 0)),
                 finish=str(meta.get("finish", "")),
             )
+            self.notifier.notify_trade(
+                mode=mode,
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                price=price,
+                finish=str(meta.get("finish", "")),
+                edge_cents=float(meta.get("edge_cents", 0)),
+            )
             return
 
         try:
@@ -396,8 +415,24 @@ class HourlyBot:
                 cost,
                 order_id,
             )
+            self.notifier.notify_trade(
+                mode=mode,
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                price=price,
+                finish=str(meta.get("finish", "")),
+                edge_cents=float(meta.get("edge_cents", 0)),
+                order_id=order_id,
+            )
         except Exception:
             logger.exception("order failed for %s", ticker)
+            self.notifier.notify_order_failed(
+                ticker=ticker,
+                side=side,
+                contracts=contracts,
+                price=price,
+            )
             self.journal.record_trade(
                 ticker=ticker,
                 side=side,
@@ -440,6 +475,11 @@ def run_loop(max_cycles: int | None = None, config: BotConfig | None = None) -> 
     cfg = config or load_config()
     require_live_credentials(cfg)
     bot = HourlyBot(cfg)
+    if cfg.notify.notify_on_startup and bot.notifier.config.configured:
+        bot.notifier.notify_startup(
+            mode="PAPER" if cfg.paper else "LIVE",
+            max_trade_usd=cfg.sizing.max_trade_usd,
+        )
     cycles = 0
     try:
         while max_cycles is None or cycles < max_cycles:
@@ -459,10 +499,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--max-trade-usd", type=float, default=None, help="Hard cap per trade (default $1)")
     parser.add_argument("--once", action="store_true", help="Run a single cycle")
     parser.add_argument("--cycles", type=int, default=None, help="Run N cycles then exit")
+    parser.add_argument("--test-notify", action="store_true", help="Send a test SMS and exit")
     args = parser.parse_args(argv)
     setup_logging()
 
     cfg = load_config()
+    if args.test_notify:
+        notifier = PhoneNotifier(cfg.notify)
+        if not cfg.notify.configured:
+            raise SystemExit(
+                "SMS not configured. Set NOTIFY_ENABLED=true, NOTIFY_PHONE_NUMBER, "
+                "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER in .env"
+            )
+        ok = notifier.notify_startup(mode="TEST", max_trade_usd=cfg.sizing.max_trade_usd)
+        notifier.close()
+        raise SystemExit(0 if ok else 1)
     if args.live:
         cfg.paper = False
         cfg.kalshi_env = os.getenv("KALSHI_ENV", "prod")

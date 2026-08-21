@@ -99,6 +99,30 @@ class RiskConfig:
 
 
 @dataclass
+class NotifyConfig:
+    enabled: bool = False
+    phone_to: str = ""
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""
+    notify_on_trade: bool = True
+    notify_on_settlement: bool = True
+    notify_on_order_failed: bool = True
+    notify_on_paper: bool = False
+    notify_on_startup: bool = False
+
+    @property
+    def configured(self) -> bool:
+        return bool(
+            self.enabled
+            and self.phone_to
+            and self.twilio_account_sid
+            and self.twilio_auth_token
+            and self.twilio_from
+        )
+
+
+@dataclass
 class BotConfig:
     series_ticker: str = "KXBTCD"
     window_seconds: int = WINDOW_SECONDS
@@ -109,6 +133,7 @@ class BotConfig:
     edge: EdgeConfig = field(default_factory=EdgeConfig)
     sizing: SizingConfig = field(default_factory=SizingConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
 
     kalshi_env: str = field(default_factory=lambda: os.getenv("KALSHI_ENV", "public"))
     kalshi_api_key_id: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY_ID", ""))
@@ -153,6 +178,19 @@ def load_config() -> BotConfig:
     cfg.kalshi_private_key_pem = pem
     if cfg.sizing.max_trade_usd <= 1.0:
         cfg.risk.max_open_positions = 1
+
+    cfg.notify = NotifyConfig(
+        enabled=os.getenv("NOTIFY_ENABLED", "false").lower() in ("true", "1", "yes"),
+        phone_to=os.getenv("NOTIFY_PHONE_NUMBER", ""),
+        twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+        twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+        twilio_from=os.getenv("TWILIO_FROM_NUMBER", ""),
+        notify_on_trade=os.getenv("NOTIFY_ON_TRADE", "true").lower() not in ("false", "0", "no"),
+        notify_on_settlement=os.getenv("NOTIFY_ON_SETTLEMENT", "true").lower() not in ("false", "0", "no"),
+        notify_on_order_failed=os.getenv("NOTIFY_ON_ORDER_FAILED", "true").lower() not in ("false", "0", "no"),
+        notify_on_paper=os.getenv("NOTIFY_ON_PAPER", "false").lower() in ("true", "1", "yes"),
+        notify_on_startup=os.getenv("NOTIFY_ON_STARTUP", "false").lower() in ("true", "1", "yes"),
+    )
     return cfg
 
 
