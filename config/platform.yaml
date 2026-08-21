@@ -2,7 +2,7 @@
 
 platform:
   # Explicit kill switch — must be true AND v6.live_trading_enabled for 15m orders
-  trading_enabled: false
+  trading_enabled: true
   model_version: production-v1
   candidate_model_version: null
   daily_loss_limit_usd: 50.0

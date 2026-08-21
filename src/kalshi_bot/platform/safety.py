@@ -101,6 +101,14 @@ class LiveSafetyGate:
     def record_pnl(self, pnl_usd: float) -> None:
         self._daily_pnl_usd += pnl_usd
 
+    def reset_session(self) -> None:
+        """Clear in-memory daily P&L and transient block reasons."""
+        self._daily_pnl_usd = 0.0
+        self._open_exposure_usd = 0.0
+        self._open_positions = 0
+        if self._block_reason and "loss limit" in self._block_reason.lower():
+            self._block_reason = None
+
     def allow_new_orders(self, observations: ObservationBundle | None = None) -> tuple[bool, str]:
         if not self.trading_enabled:
             return False, "Trading disabled by configuration (platform.trading_enabled=false)"

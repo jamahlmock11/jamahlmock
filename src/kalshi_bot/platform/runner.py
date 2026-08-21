@@ -112,6 +112,14 @@ class ProductionPlatform:
         )
         self.safety.candidate_model_version = platform_cfg.candidate_model_version
 
+        if live_mode:
+            logger.info("LIVE execution enabled (authenticated Kalshi API)")
+        elif self.config.execution.mode == "live" and not self.config.execution.dry_run:
+            logger.warning(
+                "Live execution configured but API not authenticated — "
+                "set KALSHI_API_KEY_ID, KALSHI_PRIVATE_KEY_PEM, and KALSHI_ENV=prod in .env"
+            )
+
         self.strategies: list[StrategyEngine] = []
         if enable_15m and platform_cfg.enable_kxbtc15m and self.config.v6.enabled:
             self.strategies.append(
@@ -130,6 +138,13 @@ class ProductionPlatform:
     def close(self) -> None:
         self.trade_tape.close()
         self.client.close()
+
+    def reset_trading_state(self) -> None:
+        """Reset kill switch, risk counters, and session P&L tracking."""
+        self.engine.risk.reset()
+        self.risk.reset()
+        self.safety.reset_session()
+        logger.info("trading state reset (kill switch, exposure, cooldowns, daily P&L)")
 
     def run_cycle(self, *, execute: bool = False) -> PlatformCycleResult:
         now = time.time()

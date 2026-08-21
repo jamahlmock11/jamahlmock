@@ -106,3 +106,7 @@ class RiskManager:
         self.state.open_positions = max(0, self.state.open_positions - 1)
         self.state.exposure_usd = max(0.0, self.state.exposure_usd - cost_usd)
         self.state.traded_tickers.discard(ticker)
+
+    def reset(self) -> None:
+        """Clear session risk state (cooldowns, exposure, traded tickers)."""
+        self.state = RiskState()
