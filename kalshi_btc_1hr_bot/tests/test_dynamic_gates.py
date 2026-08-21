@@ -8,6 +8,7 @@ from kalshi_btc_1hr_bot.dynamic_gates import (
     classify_hour_bucket,
     resolve_dynamic_thresholds,
 )
+from kalshi_btc_1hr_bot import config
 
 
 def test_classify_hour_buckets():
@@ -88,8 +89,33 @@ def test_apply_dynamic_thresholds_uses_trade_side_not_static_76():
 
 def test_early_bucket_looser_than_before():
     early = resolve_dynamic_thresholds(3000, vol_regime="med", agreement_score=0.65)
+    final = resolve_dynamic_thresholds(300, vol_regime="med", agreement_score=0.65, crowd_side_prob=0.66)
     assert early.min_crowd_favorite <= 0.72
-    assert early.min_edge_cents <= 2.6
+    assert final.min_crowd_favorite <= 0.66
+    assert final.min_edge_cents <= 1.6
+    assert final.min_crowd_favorite >= config.GATE_ABS_MIN_CROWD
+    assert final.min_edge_cents >= config.GATE_ABS_MIN_EDGE_CENTS
+
+
+def test_quality_guardrails_compensate_relaxed_crowd():
+    from kalshi_btc_1hr_bot.dynamic_gates import _apply_quality_guardrails
+
+    cf_lo, cf_hi = 0.58, 0.66
+    edge_lo, edge_hi = 1.25, 1.7
+    base_ev = 0.012
+    crowd, edge, ev, ag = _apply_quality_guardrails(
+        min_crowd=0.59,
+        min_edge=1.25,
+        min_evidence=base_ev,
+        min_agreement=0.48,
+        cf_lo=cf_lo,
+        cf_hi=cf_hi,
+        edge_lo=edge_lo,
+        edge_hi=edge_hi,
+    )
+    assert crowd >= config.GATE_ABS_MIN_CROWD
+    assert edge >= config.GATE_ABS_MIN_EDGE_CENTS
+    assert ev > base_ev
 
 
 def test_dynamic_crowd_gate_allows_mid_bucket_trade():

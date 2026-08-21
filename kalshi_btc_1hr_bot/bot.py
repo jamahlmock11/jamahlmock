@@ -106,16 +106,16 @@ class HourlyBot:
                 yes_bid_f = float(market.get("yes_bid") or yes_ask_f)
                 no_bid_f = float(market.get("no_bid") or no_ask_f)
 
+                side_prob = forecast.crowd.side_prob(direction.side)
                 thresholds = resolve_dynamic_thresholds(
                     secs,
                     vol_regime=forecast.vol_regime,
                     agreement_score=forecast.agreement_score,
-                    crowd_side_prob=forecast.crowd.side_prob(direction.side),
+                    crowd_side_prob=side_prob,
                 )
-                forecast = apply_dynamic_thresholds(forecast, thresholds, direction.side)
-
+                aligned = apply_dynamic_thresholds(forecast, thresholds, direction.side)
                 edge = evaluate_edge_with_evidence(
-                    forecast.p_fair,
+                    aligned.p_fair,
                     yes_ask_f,
                     no_ask_f,
                     yes_bid_f,
@@ -123,18 +123,39 @@ class HourlyBot:
                     direction,
                     fee_cents=self.config.edge.fee_per_contract_cents,
                     thresholds=thresholds,
-                    forecast=forecast,
+                    forecast=aligned,
                 )
+                # Edge-aware re-tune: strong edge can unlock slightly lower complementary gates
+                if edge.edge_cents >= 1.25 and not edge.should_trade:
+                    thresholds = resolve_dynamic_thresholds(
+                        secs,
+                        vol_regime=forecast.vol_regime,
+                        agreement_score=forecast.agreement_score,
+                        edge_cents=edge.edge_cents,
+                        crowd_side_prob=side_prob,
+                    )
+                    aligned = apply_dynamic_thresholds(forecast, thresholds, direction.side)
+                    edge = evaluate_edge_with_evidence(
+                        aligned.p_fair,
+                        yes_ask_f,
+                        no_ask_f,
+                        yes_bid_f,
+                        no_bid_f,
+                        direction,
+                        fee_cents=self.config.edge.fee_per_contract_cents,
+                        thresholds=thresholds,
+                        forecast=aligned,
+                    )
 
                 candidates.append(
                     MarketCandidate(
                         ticker=ticker,
                         strike=float(strike),
                         secs_left=secs,
-                        forecast=forecast,
+                        forecast=aligned,
                         direction=direction,
                         edge=edge,
-                        evidence_score=evidence_score(direction, forecast),
+                        evidence_score=evidence_score(direction, aligned),
                         market=market,
                         thresholds=thresholds,
                     )

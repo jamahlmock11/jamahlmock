@@ -49,17 +49,17 @@ DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
         label="25→45 min",
     ),
     HourBucket.HOUR_LATE: BucketPolicy(
-        crowd_favorite=(0.62, 0.74),
-        min_edge_cents=(1.8, 2.6),
-        evidence_margin=(0.012, 0.020),
+        crowd_favorite=(0.60, 0.70),
+        min_edge_cents=(1.5, 2.2),
+        evidence_margin=(0.013, 0.020),
         min_quorum=(4, 5),
         min_agreement=(0.50, 0.56),
         label="10→25 min",
     ),
     HourBucket.HOUR_FINAL: BucketPolicy(
-        crowd_favorite=(0.60, 0.72),
-        min_edge_cents=(1.5, 2.2),
-        evidence_margin=(0.010, 0.016),
+        crowd_favorite=(0.58, 0.66),
+        min_edge_cents=(1.25, 1.7),
+        evidence_margin=(0.012, 0.017),
         min_quorum=(4, 5),
         min_agreement=(0.48, 0.54),
         label="2→10 min",
@@ -144,6 +144,42 @@ def _vol_adjustment(vol_regime: str) -> dict[str, float]:
     return {"crowd": 0.0, "edge": 0.0, "evidence": 0.0, "agreement": 0.0, "quorum": 0}
 
 
+def _apply_quality_guardrails(
+    *,
+    min_crowd: float,
+    min_edge: float,
+    min_evidence: float,
+    min_agreement: float,
+    cf_lo: float,
+    cf_hi: float,
+    edge_lo: float,
+    edge_hi: float,
+) -> tuple[float, float, float, float]:
+    """Loosen entries but compensate so weak setups stay blocked."""
+    min_crowd = max(config.GATE_ABS_MIN_CROWD, min_crowd)
+    min_edge = max(config.GATE_ABS_MIN_EDGE_CENTS, min_edge)
+    min_evidence = max(config.GATE_ABS_MIN_EVIDENCE, min_evidence)
+    min_agreement = max(config.GATE_ABS_MIN_AGREEMENT, min_agreement)
+
+    cf_mid = (cf_lo + cf_hi) / 2.0
+    edge_mid = (edge_lo + edge_hi) / 2.0
+
+    # Lower crowd floor → require slightly stronger evidence
+    if min_crowd < cf_mid:
+        relax = (cf_mid - min_crowd) / max(cf_mid - cf_lo, 0.01)
+        min_evidence += 0.0025 * relax
+
+    # Lower edge floor → require slightly stronger crowd
+    if min_edge < edge_mid:
+        relax = (edge_mid - min_edge) / max(edge_mid - edge_lo, 0.01)
+        min_crowd += 0.008 * relax
+
+    min_crowd = min(cf_hi, max(config.GATE_ABS_MIN_CROWD, min_crowd))
+    min_edge = max(config.GATE_ABS_MIN_EDGE_CENTS, min_edge)
+    min_evidence = max(config.GATE_ABS_MIN_EVIDENCE, min_evidence)
+    return min_crowd, min_edge, min_evidence, min_agreement
+
+
 def resolve_dynamic_thresholds(
     seconds_to_expiry: float,
     *,
@@ -181,8 +217,8 @@ def resolve_dynamic_thresholds(
     vol = _vol_adjustment(vol_regime)
 
     # Strong edge or crowd → relax complementary gates slightly.
-    min_crowd = _lerp(cf_hi, cf_lo, 0.45 + 0.25 * t_edge + 0.20 * t_agree)
-    min_edge = _lerp(edge_hi, edge_lo, 0.40 + 0.30 * t_crowd + 0.25 * t_agree)
+    min_crowd = _lerp(cf_hi, cf_lo, 0.50 + 0.30 * t_edge + 0.15 * t_agree)
+    min_edge = _lerp(edge_hi, edge_lo, 0.45 + 0.35 * t_crowd + 0.20 * t_agree)
     min_evidence = _lerp(ev_hi, ev_lo, 0.45 + 0.30 * t_edge + 0.15 * t_agree)
     min_agreement = _lerp(ag_hi, ag_lo, 0.40 + 0.35 * t_crowd + 0.20 * t_edge)
     min_quorum = int(round(_lerp(float(q_hi), float(q_lo), 0.35 + 0.35 * t_agree + 0.20 * t_crowd)))
@@ -192,6 +228,17 @@ def resolve_dynamic_thresholds(
     min_evidence = max(ev_lo, min(ev_hi, min_evidence + vol["evidence"]))
     min_agreement = max(ag_lo, min(ag_hi, min_agreement + vol["agreement"]))
     min_quorum = max(q_lo, min(q_hi, min_quorum + int(vol["quorum"])))
+
+    min_crowd, min_edge, min_evidence, min_agreement = _apply_quality_guardrails(
+        min_crowd=min_crowd,
+        min_edge=min_edge,
+        min_evidence=min_evidence,
+        min_agreement=min_agreement,
+        cf_lo=cf_lo,
+        cf_hi=cf_hi,
+        edge_lo=edge_lo,
+        edge_hi=edge_hi,
+    )
 
     return DynamicThresholds(
         bucket=bucket,

@@ -11,6 +11,11 @@ MIN_EDGE_CENTS = 2.5
 FEE_PER_CONTRACT_CENTS = 1.75
 DYNAMIC_GATES_ENABLED = True
 RISK_MIN_SECONDS = 120.0
+# Hard quality floors — gates may loosen inside buckets but never below these
+GATE_ABS_MIN_CROWD = 0.60
+GATE_ABS_MIN_EDGE_CENTS = 1.25
+GATE_ABS_MIN_EVIDENCE = 0.012
+GATE_ABS_MIN_AGREEMENT = 0.48
 
 # Model / market constants
 WINDOW_SECONDS = 3600
