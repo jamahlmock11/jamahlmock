@@ -54,6 +54,7 @@ class DashboardSnapshot:
     config_summary: dict[str, Any] = field(default_factory=dict)
     recent_settlements: list[dict[str, Any]] = field(default_factory=list)
     crowd: dict[str, Any] = field(default_factory=dict)
+    entry_context: dict[str, Any] | None = None
 
 
 def _iso_now() -> str:
@@ -102,6 +103,7 @@ def build_checklist(
     brti_official: bool,
     markets_scanned: int,
     best: MarketCandidate | None,
+    focus: MarketCandidate | None = None,
     is_pick: bool,
     allowed: bool,
     block_reason: str,
@@ -124,7 +126,8 @@ def build_checklist(
             "scan",
         ),
     ]
-    if best is None:
+    gate_cand = best or focus
+    if gate_cand is None:
         items.append(
             CheckItem(
                 "Tradeable edge found",
@@ -135,14 +138,14 @@ def build_checklist(
         )
         return items
 
-    th = thresholds or best.thresholds
+    th = thresholds or gate_cand.thresholds
     if th is None:
         th = resolve_dynamic_thresholds(
-            best.secs_left,
-            vol_regime=best.forecast.vol_regime,
-            agreement_score=best.forecast.agreement_score,
-            edge_cents=best.edge.edge_cents,
-            crowd_side_prob=best.forecast.crowd.side_prob(best.direction.side),
+            gate_cand.secs_left,
+            vol_regime=gate_cand.forecast.vol_regime,
+            agreement_score=gate_cand.forecast.agreement_score,
+            edge_cents=gate_cand.edge.edge_cents,
+            crowd_side_prob=gate_cand.forecast.crowd.side_prob(gate_cand.direction.side),
         )
 
     cf_rng = th.crowd_favorite_range
@@ -152,52 +155,54 @@ def build_checklist(
 
     edge_label = "Edge" if not cfg.edge.subtract_fees_from_edge else "Net edge"
     edge_detail = (
-        f"{best.edge.edge_cents:.1f}¢ gross (fees ignored for gates)"
+        f"{gate_cand.edge.edge_cents:.1f}¢ gross (fees ignored for gates)"
         if not cfg.edge.subtract_fees_from_edge
-        else f"{best.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee"
+        else f"{gate_cand.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee"
     )
     items.extend(
         [
             CheckItem(
                 f"Evidence margin ≥ {th.min_evidence_margin:.3f} ({ev_rng[0]:.3f}–{ev_rng[1]:.3f})",
-                best.direction.margin >= th.min_evidence_margin,
-                f"{best.direction.margin:.3f} ({best.direction.finish_label}) · {th.bucket_label}",
+                gate_cand.direction.margin >= th.min_evidence_margin,
+                f"{gate_cand.direction.margin:.3f} ({gate_cand.direction.finish_label}) · {th.bucket_label}",
                 "evidence",
             ),
             CheckItem(
                 f"{edge_label} ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
-                best.edge.should_trade or best.edge.edge_cents >= th.min_edge_cents,
+                gate_cand.edge.should_trade or gate_cand.edge.edge_cents >= th.min_edge_cents,
                 edge_detail,
                 "edge",
             ),
             CheckItem(
                 f"Crowd quorum ≥ {th.min_quorum}",
-                best.forecast.crowd.quorum_count >= th.min_quorum,
+                gate_cand.forecast.crowd.quorum_count >= th.min_quorum,
                 (
-                    f"{best.forecast.crowd.quorum_count}/{th.min_quorum} "
-                    f"on {best.forecast.crowd.consensus_side.upper()}"
+                    f"{gate_cand.forecast.crowd.quorum_count}/{th.min_quorum} "
+                    f"on {gate_cand.forecast.crowd.consensus_side.upper()}"
                 ),
                 "crowd",
             ),
             CheckItem(
                 f"Crowd ≥ {th.min_crowd_favorite_pct:.0f}% ({cf_rng[0]*100:.0f}–{cf_rng[1]*100:.0f}%)",
-                best.forecast.crowd.side_met(best.direction.side, min_favorite=th.min_crowd_favorite),
+                gate_cand.forecast.crowd.side_met(
+                    gate_cand.direction.side, min_favorite=th.min_crowd_favorite
+                ),
                 (
-                    f"{best.direction.finish_label} "
-                    f"{best.forecast.crowd.side_pct(best.direction.side):.1f}% "
-                    f"(favorite {best.forecast.crowd.favorite_pct:.1f}%)"
+                    f"{gate_cand.direction.finish_label} "
+                    f"{gate_cand.forecast.crowd.side_pct(gate_cand.direction.side):.1f}% "
+                    f"(favorite {gate_cand.forecast.crowd.favorite_pct:.1f}%)"
                 ),
                 "crowd",
             ),
             CheckItem(
                 f"Ensemble agreement ≥ {th.min_agreement:.0%} ({ag_rng[0]:.0%}–{ag_rng[1]:.0%})",
-                best.forecast.agreement_score >= th.min_agreement,
-                f"{best.forecast.agreement_score:.0%}",
+                gate_cand.forecast.agreement_score >= th.min_agreement,
+                f"{gate_cand.forecast.agreement_score:.0%}",
                 "model",
             ),
             CheckItem(
                 "Top-4 market by edge + evidence pick",
-                is_pick and best.edge.should_trade,
+                is_pick and gate_cand.edge.should_trade,
                 "Selected as best among top markets" if is_pick else "Not the evidence winner",
                 "selection",
             ),
@@ -211,6 +216,228 @@ def build_checklist(
         ]
     )
     return items
+
+
+def _max_entry_price_cents(
+    *,
+    side: str,
+    p_fair: float,
+    min_edge_cents: float,
+    subtract_fees: bool,
+    fee_cents: float,
+) -> float | None:
+    """Max Kalshi ask (¢) on trade side that still clears min edge."""
+    gate_fee = config.gate_fee_cents(fee_cents, subtract=subtract_fees)
+    min_edge = min_edge_cents / 100.0
+    if side == "yes":
+        max_price = p_fair - min_edge - gate_fee / 100.0
+    else:
+        max_price = (1.0 - p_fair) - min_edge - gate_fee / 100.0
+    if max_price <= 0 or max_price >= 1:
+        return None
+    return round(max_price * 100, 1)
+
+
+def build_entry_context(
+    *,
+    focus: MarketCandidate,
+    spot: float,
+    thresholds: DynamicThresholds,
+    cfg: BotConfig,
+    risk: RiskManager,
+    allowed: bool,
+    block_reason: str,
+    contracts: int,
+    is_pick: bool,
+) -> dict[str, Any]:
+    """Structured Kalshi-vs-gates view for the dashboard Currently panel."""
+    market = focus.market
+    side = focus.direction.side
+    finish = focus.direction.finish_label
+    th = thresholds
+
+    yes_bid = float(market.get("yes_bid") or market.get("yes_ask") or 0)
+    yes_ask = float(market.get("yes_ask") or 0)
+    no_bid = float(market.get("no_bid") or market.get("no_ask") or 0)
+    no_ask = float(market.get("no_ask") or 0)
+    yes_bid_c = round(yes_bid * 100)
+    yes_ask_c = round(yes_ask * 100)
+    no_bid_c = round(no_bid * 100)
+    no_ask_c = round(no_ask * 100)
+
+    trade_bid_c = yes_bid_c if side == "yes" else no_bid_c
+    trade_ask_c = yes_ask_c if side == "yes" else no_ask_c
+    fair_yes_pct = focus.forecast.p_fair * 100.0
+    fair_side_pct = fair_yes_pct if side == "yes" else (1.0 - focus.forecast.p_fair) * 100.0
+    crowd_side_pct = focus.forecast.crowd.side_pct(side)
+    edge_need = th.min_edge_cents
+    edge_have = focus.edge.edge_cents
+    edge_delta = edge_need - edge_have
+
+    max_entry = _max_entry_price_cents(
+        side=side,
+        p_fair=focus.forecast.p_fair,
+        min_edge_cents=edge_need,
+        subtract_fees=cfg.edge.subtract_fees_from_edge,
+        fee_cents=cfg.edge.fee_per_contract_cents,
+    )
+    price_delta_c = (trade_ask_c - max_entry) if max_entry is not None else None
+
+    spot_delta = spot - focus.strike
+    if spot_delta >= 0:
+        spot_label = f"${abs(spot_delta):,.0f} above strike"
+    else:
+        spot_label = f"${abs(spot_delta):,.0f} below strike"
+
+    quorum_have = focus.forecast.crowd.quorum_count
+    quorum_need = th.min_quorum
+    crowd_need_pct = th.min_crowd_favorite_pct
+    evidence_have = focus.direction.margin
+    evidence_need = th.min_evidence_margin
+    agree_have = focus.forecast.agreement_score * 100.0
+    agree_need = th.min_agreement * 100.0
+
+    gates: list[dict[str, Any]] = [
+        {
+            "key": "quorum",
+            "label": "Crowd quorum",
+            "current": f"{quorum_have}/{quorum_need}",
+            "required": f"≥ {quorum_need}",
+            "delta": None if quorum_have >= quorum_need else f"need {quorum_need - quorum_have} more",
+            "passed": quorum_have >= quorum_need,
+        },
+        {
+            "key": "agreement",
+            "label": "Ensemble agreement",
+            "current": f"{agree_have:.1f}%",
+            "required": f"≥ {agree_need:.1f}%",
+            "delta": None if agree_have >= agree_need else f"+{agree_need - agree_have:.1f}pp",
+            "passed": agree_have >= agree_need,
+        },
+        {
+            "key": "crowd",
+            "label": f"Crowd {finish}",
+            "current": f"{crowd_side_pct:.1f}%",
+            "required": f"≥ {crowd_need_pct:.1f}%",
+            "delta": None if crowd_side_pct >= crowd_need_pct else f"+{crowd_need_pct - crowd_side_pct:.1f}pp",
+            "passed": crowd_side_pct >= crowd_need_pct,
+        },
+        {
+            "key": "evidence",
+            "label": "Evidence margin",
+            "current": f"{evidence_have:.3f}",
+            "required": f"≥ {evidence_need:.3f}",
+            "delta": None if evidence_have >= evidence_need else f"+{evidence_need - evidence_have:.3f}",
+            "passed": evidence_have >= evidence_need,
+        },
+        {
+            "key": "edge",
+            "label": "Edge (gross)" if not cfg.edge.subtract_fees_from_edge else "Net edge",
+            "current": f"{edge_have:.1f}¢",
+            "required": f"≥ {edge_need:.1f}¢",
+            "delta": None if edge_have >= edge_need else f"+{edge_delta:.1f}¢",
+            "passed": focus.edge.should_trade or edge_have >= edge_need,
+        },
+        {
+            "key": "risk",
+            "label": "Risk gate",
+            "current": "ok" if allowed else block_reason,
+            "required": "allowed",
+            "delta": None if allowed else block_reason,
+            "passed": allowed,
+        },
+        {
+            "key": "sizing",
+            "label": "Kelly size",
+            "current": f"{contracts} contracts",
+            "required": "> 0",
+            "delta": None if contracts > 0 else "blocked by upstream gates",
+            "passed": contracts > 0,
+        },
+    ]
+
+    binding = next((g for g in gates if not g["passed"]), None)
+    if binding:
+        binding = {**binding, "binding": True}
+        for g in gates:
+            g["binding"] = g["key"] == binding["key"]
+    else:
+        for g in gates:
+            g["binding"] = False
+
+    cooldown_remaining = None
+    if risk.state.last_trade_ts:
+        elapsed = max(0.0, time.time() - risk.state.last_trade_ts)
+        remaining = max(0.0, cfg.risk.cooldown_seconds - elapsed)
+        cooldown_remaining = round(remaining, 1)
+
+    return {
+        "ticker": focus.ticker,
+        "side": side,
+        "finish": finish,
+        "action": focus.edge.reason if not focus.edge.should_trade else f"BUY {side.upper()}",
+        "should_trade": focus.edge.should_trade,
+        "is_pick": is_pick,
+        "bucket_label": th.bucket_label,
+        "secs_left": round(focus.secs_left),
+        "mins_left": round(focus.secs_left / 60),
+        "binding_gate": binding["label"] if binding else None,
+        "binding_detail": binding["delta"] or binding["current"] if binding else "All gates pass",
+        "spot": round(spot, 2),
+        "strike": focus.strike,
+        "spot_to_strike_usd": round(spot_delta, 2),
+        "spot_to_strike_label": spot_label,
+        "regime": focus.forecast.vol_regime,
+        "kalshi_book": {
+            "yes_bid_cents": yes_bid_c,
+            "yes_ask_cents": yes_ask_c,
+            "no_bid_cents": no_bid_c,
+            "no_ask_cents": no_ask_c,
+            "yes_spread_cents": max(0, yes_ask_c - yes_bid_c),
+            "no_spread_cents": max(0, no_ask_c - no_bid_c),
+            "implied_yes_pct": yes_ask_c,
+            "implied_no_pct": no_ask_c,
+        },
+        "trade_side": {
+            "bid_cents": trade_bid_c,
+            "ask_cents": trade_ask_c,
+            "spread_cents": max(0, trade_ask_c - trade_bid_c),
+            "buy_price_cents": trade_ask_c,
+        },
+        "model": {
+            "fair_yes_pct": round(fair_yes_pct, 1),
+            "fair_side_pct": round(fair_side_pct, 1),
+            "edge_cents": round(edge_have, 2),
+            "edge_vs_kalshi_cents": round(fair_side_pct - trade_ask_c, 1),
+            "evidence_margin": round(evidence_have, 4),
+            "agreement_pct": round(agree_have, 1),
+            "confidence_pct": round(focus.forecast.confidence * 100, 1),
+        },
+        "requirements": {
+            "min_edge_cents": round(edge_need, 2),
+            "min_crowd_pct": round(crowd_need_pct, 1),
+            "min_evidence_margin": round(evidence_need, 4),
+            "min_agreement_pct": round(agree_need, 1),
+            "min_quorum": quorum_need,
+            "max_entry_price_cents": max_entry,
+            "price_to_clear_cents": round(price_delta_c, 1) if price_delta_c is not None else None,
+        },
+        "gates": gates,
+        "risk": {
+            "allowed": allowed,
+            "block_reason": block_reason,
+            "cooldown_remaining_s": cooldown_remaining,
+            "open_positions": risk.state.open_positions,
+            "max_open_positions": cfg.risk.max_open_positions,
+            "already_traded": focus.ticker in risk.state.traded_tickers,
+            "daily_pnl_usd": round(risk.state.daily_pnl, 2),
+        },
+        "sizing": {
+            "contracts": contracts,
+            "max_trade_usd": round(cfg.sizing.max_trade_usd, 2),
+            "cost_per_contract_usd": round(trade_ask_c / 100.0, 2),
+        },
+    }
 
 
 def build_snapshot(
@@ -234,12 +461,6 @@ def build_snapshot(
     allowed, block_reason = True, "ok"
     is_pick = False
     action = "NO_TRADE"
-    if best is not None:
-        allowed, block_reason = risk.allow_trade(ticker=best.ticker, seconds_to_expiry=best.secs_left)
-        is_pick = best.ticker == best_ticker
-        if best_decision:
-            contracts = int(best_decision.get("contracts") or 0)
-            action = str(best_decision.get("action") or "NO_TRADE")
 
     # Top 4 by edge — always show prices even when below threshold
     top_by_edge = sorted(candidates, key=lambda c: c.edge.edge_cents, reverse=True)[
@@ -256,12 +477,25 @@ def build_snapshot(
             edge_cents=focus.edge.edge_cents,
             crowd_side_prob=focus.forecast.crowd.side_prob(focus.direction.side),
         )
+        allowed, block_reason = risk.allow_trade(
+            ticker=focus.ticker, seconds_to_expiry=focus.secs_left
+        )
+
+    if best is not None:
+        is_pick = best.ticker == best_ticker
+        if best_decision:
+            contracts = int(best_decision.get("contracts") or 0)
+            action = str(best_decision.get("action") or "NO_TRADE")
+    elif focus is not None and best_decision and best_decision.get("ticker") == focus.ticker:
+        contracts = int(best_decision.get("contracts") or 0)
+        action = str(best_decision.get("action") or "NO_TRADE")
 
     checklist = build_checklist(
         data_ok=data.spot > 0,
         brti_official=bool(getattr(data, "is_official", False)),
         markets_scanned=markets_scanned,
         best=best,
+        focus=focus,
         is_pick=is_pick,
         allowed=allowed,
         block_reason=block_reason,
@@ -273,8 +507,8 @@ def build_snapshot(
     readiness = round(100.0 * passed / len(checklist), 1) if checklist else 0.0
 
     blockers = [c.detail for c in checklist if not c.passed]
-    if best and not best.edge.should_trade:
-        blockers.insert(0, best.edge.reason)
+    if focus and not focus.edge.should_trade:
+        blockers.insert(0, focus.edge.reason)
 
     top_rows: list[dict[str, Any]] = []
     for i, cand in enumerate(top_by_edge, start=1):
@@ -350,6 +584,20 @@ def build_snapshot(
         )
         cycle_status = "NO_TRADE"
 
+    entry_context = None
+    if focus is not None and focus_th is not None:
+        entry_context = build_entry_context(
+            focus=focus,
+            spot=float(data.spot),
+            thresholds=focus_th,
+            cfg=cfg,
+            risk=risk,
+            allowed=allowed,
+            block_reason=block_reason,
+            contracts=contracts,
+            is_pick=is_pick,
+        )
+
     return DashboardSnapshot(
         updated_at=_iso_now(),
         mode=mode,
@@ -423,6 +671,7 @@ def build_snapshot(
         },
         recent_settlements=recent_settlements or [],
         crowd=crowd_data,
+        entry_context=entry_context,
     )
 
 

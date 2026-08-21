@@ -94,6 +94,183 @@
     }).join("");
   }
 
+  function renderCurrently(snap) {
+    const body = $("currently-body");
+    const meta = $("currently-meta");
+    const ctx = snap.entry_context;
+
+    if (!ctx) {
+      meta.textContent = snap.updated_at ? "Updated " + snap.updated_at.slice(11, 19) + " UTC" : "—";
+      body.innerHTML = '<div class="currently-empty">No market in the hourly window yet.</div>';
+      return;
+    }
+
+    meta.textContent =
+      ctx.ticker + " · " + ctx.bucket_label + " · " + ctx.mins_left + "m left · " + (ctx.regime || "med") + " vol";
+
+    const book = ctx.kalshi_book || {};
+    const trade = ctx.trade_side || {};
+    const model = ctx.model || {};
+    const req = ctx.requirements || {};
+    const risk = ctx.risk || {};
+    const sideClass = ctx.finish === "ABOVE" ? "above" : "below";
+    const bindingClass = ctx.binding_gate ? "binding-fail" : "binding-ok";
+
+    let priceHint = "";
+    if (req.max_entry_price_cents != null && req.price_to_clear_cents != null && req.price_to_clear_cents > 0) {
+      priceHint =
+        "Kalshi " +
+        ctx.side.toUpperCase() +
+        " ask must drop " +
+        req.price_to_clear_cents.toFixed(1) +
+        "¢ to ≤ " +
+        req.max_entry_price_cents.toFixed(1) +
+        "¢ for min edge";
+    } else if (req.max_entry_price_cents != null && ctx.should_trade) {
+      priceHint = "Price clears min edge at current ask";
+    }
+
+    const gateRows = (ctx.gates || [])
+      .map(function (g) {
+        const rowClass = g.passed ? "gate-pass" : g.binding ? "gate-binding" : "gate-fail";
+        const delta = g.delta ? '<span class="gate-delta">' + g.delta + "</span>" : '<span class="gate-ok-mark">✓</span>';
+        return (
+          '<div class="gate-row ' +
+          rowClass +
+          '">' +
+          '<div class="gate-name">' +
+          g.label +
+          (g.binding ? ' <span class="gate-binding-tag">BLOCKING</span>' : "") +
+          "</div>" +
+          '<div class="gate-current">' +
+          g.current +
+          "</div>" +
+          '<div class="gate-required">' +
+          g.required +
+          "</div>" +
+          '<div class="gate-gap">' +
+          delta +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    body.innerHTML =
+      '<div class="currently-grid">' +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Market &amp; Spot</div>' +
+      '<div class="currently-kv"><span class="k">Strike</span><span class="v">$' +
+      Number(ctx.strike).toLocaleString() +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">BRTI Spot</span><span class="v">$' +
+      Number(ctx.spot).toLocaleString(undefined, { maximumFractionDigits: 0 }) +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Distance</span><span class="v ' +
+      sideClass +
+      '">' +
+      ctx.spot_to_strike_label +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Trade direction</span><span class="v ' +
+      sideClass +
+      '">' +
+      ctx.finish +
+      " · " +
+      ctx.side.toUpperCase() +
+      "</span></div>" +
+      "</div>" +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Kalshi Order Book</div>' +
+      '<div class="book-grid">' +
+      '<div class="book-side"><div class="book-label">YES</div><div class="book-prices">' +
+      (book.yes_bid_cents != null ? book.yes_bid_cents : "—") +
+      " / " +
+      (book.yes_ask_cents != null ? book.yes_ask_cents : "—") +
+      '¢</div><div class="book-sub">bid / ask · spread ' +
+      (book.yes_spread_cents != null ? book.yes_spread_cents : "—") +
+      "¢</div></div>" +
+      '<div class="book-side"><div class="book-label">NO</div><div class="book-prices">' +
+      (book.no_bid_cents != null ? book.no_bid_cents : "—") +
+      " / " +
+      (book.no_ask_cents != null ? book.no_ask_cents : "—") +
+      '¢</div><div class="book-sub">bid / ask · spread ' +
+      (book.no_spread_cents != null ? book.no_spread_cents : "—") +
+      "¢</div></div>" +
+      "</div>" +
+      '<div class="currently-kv"><span class="k">Your side (' +
+      ctx.side.toUpperCase() +
+      ')</span><span class="v">' +
+      trade.bid_cents +
+      " / " +
+      trade.ask_cents +
+      '¢ bid/ask</span></div>' +
+      '<div class="currently-kv"><span class="k">Kalshi implied</span><span class="v">YES ' +
+      book.implied_yes_pct +
+      "¢ · NO " +
+      book.implied_no_pct +
+      "¢</span></div>" +
+      "</div>" +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Model vs Kalshi</div>' +
+      '<div class="currently-kv"><span class="k">Model fair YES</span><span class="v">' +
+      model.fair_yes_pct +
+      "%</span></div>" +
+      '<div class="currently-kv"><span class="k">Model fair ' +
+      ctx.finish +
+      '</span><span class="v ' +
+      sideClass +
+      '">' +
+      model.fair_side_pct +
+      "%</span></div>" +
+      '<div class="currently-kv"><span class="k">Kalshi ' +
+      ctx.side.toUpperCase() +
+      " ask</span><span class=\"v\">" +
+      trade.ask_cents +
+      "¢</span></div>" +
+      '<div class="currently-kv"><span class="k">Fair − Ask gap</span><span class="v">' +
+      (model.edge_vs_kalshi_cents != null ? model.edge_vs_kalshi_cents.toFixed(1) + "pp" : "—") +
+      " · edge " +
+      fmtCents(model.edge_cents) +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Need for entry</span><span class="v">edge ≥ ' +
+      req.min_edge_cents +
+      "¢ · crowd ≥ " +
+      req.min_crowd_pct +
+      "%</span></div>" +
+      (priceHint
+        ? '<div class="price-hint">' + priceHint + "</div>"
+        : "") +
+      "</div>" +
+      '<div class="currently-card currently-gates">' +
+      '<div class="currently-card-title">Distance to Entry</div>' +
+      '<div class="binding-banner ' +
+      bindingClass +
+      '">' +
+      (ctx.binding_gate
+        ? "<strong>Blocking:</strong> " + ctx.binding_gate + " — " + ctx.binding_detail
+        : "<strong>All gates pass</strong> — awaiting pick / execution") +
+      "</div>" +
+      '<div class="gate-table-head"><span>Gate</span><span>Now</span><span>Need</span><span>Gap</span></div>' +
+      gateRows +
+      '<div class="risk-line">' +
+      "Risk: " +
+      (risk.allowed ? "ok" : risk.block_reason) +
+      " · positions " +
+      risk.open_positions +
+      "/" +
+      risk.max_open_positions +
+      (risk.cooldown_remaining_s != null && risk.cooldown_remaining_s > 0
+        ? " · cooldown " + Math.ceil(risk.cooldown_remaining_s) + "s"
+        : "") +
+      (risk.already_traded ? " · already traded this ticker" : "") +
+      " · size " +
+      (ctx.sizing && ctx.sizing.contracts != null ? ctx.sizing.contracts : 0) +
+      " contracts" +
+      "</div>" +
+      "</div>" +
+      "</div>";
+  }
+
   function renderSnapshot(snap, stats) {
     $("stat-spot").textContent = snap.spot ? "$" + Number(snap.spot).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
     $("stat-brti").textContent = (snap.brti_source || "—") + (snap.brti_official ? " · official" : " · proxy");
@@ -318,6 +495,7 @@
     const snap = payload.snapshot || {};
     const stats = payload.stats || {};
     renderStatusBanner(snap);
+    renderCurrently(snap);
     renderTop4(snap);
     renderSnapshot(snap, stats);
     renderBest(snap);
