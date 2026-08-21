@@ -493,11 +493,44 @@
     }).join("");
   }
 
+  function renderOpenPositions(snap) {
+    const section = $("open-positions-section");
+    const body = $("open-positions-body");
+    const meta = $("open-positions-meta");
+    const positions = snap.open_positions || [];
+    if (!positions.length) {
+      section.classList.add("hidden");
+      return;
+    }
+    section.classList.remove("hidden");
+    const th = snap.thresholds || {};
+    meta.textContent =
+      "TP +" + Math.round((th.take_profit_pct || 0.5) * 100) + "% · SL −" +
+      Math.round((th.stop_loss_pct || 0.4) * 100) + "% · monitoring live";
+    body.innerHTML = positions.map(function (p) {
+      const bid = p.bid_cents != null ? p.bid_cents + "¢" : "—";
+      const unreal = p.unrealized_pnl_usd != null ? fmtUsd(p.unrealized_pnl_usd) : "—";
+      const unrealClass = pnlClass(p.unrealized_pnl_usd || 0);
+      return (
+        '<div class="open-pos-card">' +
+        '<div class="open-pos-title">' + p.ticker + " · " + (p.side || "").toUpperCase() + " x" + p.contracts + "</div>" +
+        '<div class="open-pos-grid">' +
+        '<div class="open-pos-kv"><span class="k">Entry</span><span class="v">' + p.entry_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Bid now</span><span class="v">' + bid + "</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Take profit</span><span class="v tp">' + p.tp_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Stop loss</span><span class="v sl">' + p.sl_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Unrealized</span><span class="v ' + unrealClass + '">' + unreal + "</span></div>" +
+        "</div></div>"
+      );
+    }).join("");
+  }
+
   function render(payload) {
     const snap = payload.snapshot || {};
     const stats = payload.stats || {};
     renderStatusBanner(snap);
     renderCurrently(snap);
+    renderOpenPositions(snap);
     renderTop4(snap);
     renderSnapshot(snap, stats);
     renderBest(snap);

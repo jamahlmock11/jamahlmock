@@ -29,7 +29,7 @@ html, body { margin: 0; min-height: 100%; color: var(--text); background: var(--
 .bg-glow-a { top: -20%; left: -10%; background: rgba(255,176,32,0.12); }
 .bg-glow-b { bottom: -25%; right: -10%; background: rgba(0,229,255,0.08); }
 
-.hero, .stats-strip, .layout, .footer, .status-banner, .top4-section, .currently-section { position: relative; z-index: 1; }
+.hero, .stats-strip, .layout, .footer, .status-banner, .top4-section, .currently-section, .open-positions-section { position: relative; z-index: 1; }
 
 /* === FLASHING STATUS BANNER === */
 .status-banner {
@@ -135,6 +135,33 @@ html, body { margin: 0; min-height: 100%; color: var(--text); background: var(--
 .gate-delta { color: var(--yellow); font-weight: 600; }
 .gate-ok-mark { color: var(--green); }
 .risk-line { margin-top: 0.55rem; font-size: 0.62rem; color: var(--muted); line-height: 1.4; }
+
+/* === OPEN POSITIONS === */
+.open-positions-section {
+  padding: 0.65rem 1.75rem 0.35rem;
+  border-bottom: 1px solid rgba(0,255,136,0.12);
+}
+.open-positions-section.hidden { display: none; }
+.open-positions-head {
+  display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.55rem;
+}
+.open-positions-head h2 {
+  margin: 0; font-family: var(--display); font-size: 0.9rem; color: var(--green);
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+.open-positions-meta { font-size: 0.65rem; color: var(--muted); }
+.open-positions-body { display: grid; gap: 0.55rem; }
+.open-pos-card {
+  background: rgba(0,255,136,0.06); border: 1px solid rgba(0,255,136,0.22);
+  border-radius: 12px; padding: 0.65rem 0.85rem;
+}
+.open-pos-title { font-size: 0.78rem; font-weight: 700; margin-bottom: 0.45rem; }
+.open-pos-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.45rem; }
+.open-pos-kv { display: flex; flex-direction: column; gap: 0.08rem; }
+.open-pos-kv .k { color: var(--muted); font-size: 0.58rem; text-transform: uppercase; }
+.open-pos-kv .v { font-size: 0.78rem; font-weight: 600; }
+.open-pos-kv .v.tp { color: var(--green); }
+.open-pos-kv .v.sl { color: var(--red); }
 
 /* === TOP 4 PRICE CARDS === */
 .top4-section { padding: 0.85rem 1.75rem 0.5rem; }

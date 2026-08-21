@@ -137,6 +137,35 @@ class PhoneNotifier:
             f"Result {result.upper()} · PnL {sign}${pnl:.2f}"
         )
 
+    def notify_exit(
+        self,
+        *,
+        mode: str,
+        ticker: str,
+        side: str,
+        contracts: int,
+        entry_price: float,
+        exit_price: float,
+        reason: str,
+        pnl: float,
+        order_id: str = "",
+    ) -> bool:
+        if mode.upper() == "PAPER" and not self.config.notify_on_paper:
+            return False
+        if not self.config.notify_on_exit:
+            return False
+        label = "TAKE PROFIT" if reason == "take_profit" else "STOP LOSS"
+        sign = "+" if pnl >= 0 else ""
+        msg = (
+            f"KXBTCD 1hr · {label}\n"
+            f"SELL {side.upper()} x{contracts} @ {exit_price * 100:.0f}¢\n"
+            f"{ticker}\n"
+            f"Entry {entry_price * 100:.0f}¢ · PnL {sign}${pnl:.2f}"
+        )
+        if order_id:
+            msg += f"\norder {order_id[:12]}"
+        return self.send(msg)
+
     def notify_order_failed(
         self,
         *,

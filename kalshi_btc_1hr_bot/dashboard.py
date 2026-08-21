@@ -62,6 +62,11 @@ def _trade_to_dict(trade: Any) -> dict[str, Any]:
         "pnl_usd": round(trade.pnl, 4) if trade.pnl is not None else None,
         "result": trade.result,
         "status": _trade_status(trade),
+        "tp_price": trade.tp_price,
+        "sl_price": trade.sl_price,
+        "exit_price": trade.exit_price,
+        "exit_reason": trade.exit_reason,
+        "closed_early": trade.closed_early,
     }
 
 
@@ -70,6 +75,13 @@ def _trade_status(trade: Any) -> str:
         return "BLOCKED"
     if not trade.settled:
         return "OPEN"
+    if getattr(trade, "closed_early", False):
+        reason = str(getattr(trade, "exit_reason", "") or "")
+        if reason == "take_profit":
+            return "TP"
+        if reason == "stop_loss":
+            return "SL"
+        return "EXIT"
     if trade.won:
         return "WIN"
     return "LOSS"

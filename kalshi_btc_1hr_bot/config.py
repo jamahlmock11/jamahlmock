@@ -65,6 +65,12 @@ KALSHI_CARD_PICKS = 3  # only trade strikes shown on Kalshi's hourly card
 KALSHI_CARD_ONLY = True
 MIN_EVIDENCE_MARGIN = 0.02
 
+# Take-profit / stop-loss on open positions (sell at market bid before settlement)
+EXIT_ENABLED = True
+TAKE_PROFIT_PCT = 0.50  # exit when bid >= entry + 50% of entry cost
+STOP_LOSS_PCT = 0.40  # exit when bid <= entry - 40% of entry cost
+EXIT_MIN_HOLD_SECONDS = 10.0
+
 
 @dataclass
 class ModelConfig:
@@ -102,6 +108,14 @@ class SizingConfig:
 
 
 @dataclass
+class ExitConfig:
+    enabled: bool = EXIT_ENABLED
+    take_profit_pct: float = TAKE_PROFIT_PCT
+    stop_loss_pct: float = STOP_LOSS_PCT
+    min_hold_seconds: float = EXIT_MIN_HOLD_SECONDS
+
+
+@dataclass
 class RiskConfig:
     daily_loss_stop_pct: float = 0.06
     max_open_positions: int = 1
@@ -119,6 +133,7 @@ class NotifyConfig:
     twilio_from: str = ""
     notify_on_trade: bool = True
     notify_on_settlement: bool = True
+    notify_on_exit: bool = True
     notify_on_order_failed: bool = True
     notify_on_paper: bool = False
     notify_on_startup: bool = False
@@ -157,6 +172,7 @@ class BotConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     gates: GateConfig = field(default_factory=GateConfig)
+    exit: ExitConfig = field(default_factory=ExitConfig)
 
     kalshi_env: str = field(default_factory=lambda: os.getenv("KALSHI_ENV", "public"))
     kalshi_api_key_id: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY_ID", ""))
@@ -207,6 +223,14 @@ def load_config() -> BotConfig:
         "KALSHI_CARD_ONLY", "true" if KALSHI_CARD_ONLY else "false"
     ).lower() in ("true", "1", "yes")
     cfg.gates.kalshi_card_picks = int(os.getenv("KALSHI_CARD_PICKS", str(KALSHI_CARD_PICKS)))
+    cfg.exit.enabled = os.getenv("EXIT_ENABLED", "true" if EXIT_ENABLED else "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    cfg.exit.take_profit_pct = float(os.getenv("TAKE_PROFIT_PCT", str(TAKE_PROFIT_PCT)))
+    cfg.exit.stop_loss_pct = float(os.getenv("STOP_LOSS_PCT", str(STOP_LOSS_PCT)))
+    cfg.exit.min_hold_seconds = float(os.getenv("EXIT_MIN_HOLD_SECONDS", str(EXIT_MIN_HOLD_SECONDS)))
     cfg.edge.subtract_fees_from_edge = os.getenv(
         "SUBTRACT_FEES_FROM_EDGE", "false" if not SUBTRACT_FEES_FROM_EDGE else "true"
     ).lower() in ("true", "1", "yes")
@@ -241,6 +265,7 @@ def load_config() -> BotConfig:
         twilio_from=os.getenv("TWILIO_FROM_NUMBER", ""),
         notify_on_trade=os.getenv("NOTIFY_ON_TRADE", "true").lower() not in ("false", "0", "no"),
         notify_on_settlement=os.getenv("NOTIFY_ON_SETTLEMENT", "true").lower() not in ("false", "0", "no"),
+        notify_on_exit=os.getenv("NOTIFY_ON_EXIT", "true").lower() not in ("false", "0", "no"),
         notify_on_order_failed=os.getenv("NOTIFY_ON_ORDER_FAILED", "true").lower() not in ("false", "0", "no"),
         notify_on_paper=os.getenv("NOTIFY_ON_PAPER", "false").lower() in ("true", "1", "yes"),
         notify_on_startup=os.getenv("NOTIFY_ON_STARTUP", "false").lower() in ("true", "1", "yes"),

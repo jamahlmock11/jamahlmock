@@ -56,6 +56,8 @@ class DashboardSnapshot:
     recent_settlements: list[dict[str, Any]] = field(default_factory=list)
     crowd: dict[str, Any] = field(default_factory=dict)
     entry_context: dict[str, Any] | None = None
+    open_positions: list[dict[str, Any]] = field(default_factory=list)
+    early_exits: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _iso_now() -> str:
@@ -487,6 +489,8 @@ def build_snapshot(
     balance_usd: float | None = None,
     mode: str,
     recent_settlements: list[dict] | None = None,
+    open_positions: list[dict[str, Any]] | None = None,
+    early_exits: list[dict[str, Any]] | None = None,
 ) -> DashboardSnapshot:
     selected = next((d for d in decisions if d.get("selected")), None)
     best_decision = next((d for d in decisions if d.get("ticker") == best_ticker), None)
@@ -706,6 +710,10 @@ def build_snapshot(
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,
+            "exit_enabled": cfg.exit.enabled,
+            "take_profit_pct": cfg.exit.take_profit_pct,
+            "stop_loss_pct": cfg.exit.stop_loss_pct,
+            "exit_min_hold_seconds": cfg.exit.min_hold_seconds,
         },
         config_summary={
             "bankroll_usd": cfg.sizing.bankroll_usd,
@@ -716,6 +724,8 @@ def build_snapshot(
         recent_settlements=recent_settlements or [],
         crowd=crowd_data,
         entry_context=entry_context,
+        open_positions=open_positions or [],
+        early_exits=early_exits or [],
     )
 
 

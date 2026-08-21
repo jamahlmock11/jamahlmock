@@ -67,3 +67,8 @@ class RiskManager:
     def release_position(self, ticker: str) -> None:
         self.state.open_positions = max(0, self.state.open_positions - 1)
         self.state.traded_tickers.discard(ticker)
+
+    def close_position(self, ticker: str, proceeds_usd: float) -> None:
+        """Release an open position and credit sale proceeds to daily PnL."""
+        self.release_position(ticker)
+        self.state.daily_pnl += proceeds_usd

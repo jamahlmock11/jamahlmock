@@ -25,9 +25,14 @@ from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from
 from kalshi_btc_1hr_bot.kalshi_card import select_kalshi_card_markets
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.notifications import NotifyConfig, PhoneNotifier
+from kalshi_btc_1hr_bot.position_exits import (
+    bid_for_side,
+    compute_exit_levels,
+    evaluate_exit,
+)
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
-from kalshi_btc_1hr_bot.trade_journal import TradeJournal
+from kalshi_btc_1hr_bot.trade_journal import TradeJournal, TradeRecord
 from kalshi_btc_1hr_bot.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -42,8 +47,18 @@ class HourlyBot:
         self.risk = RiskManager(self.config)
         self.journal = TradeJournal()
         self.notifier = PhoneNotifier(self.config.notify)
+        self._sync_risk_from_journal()
         if not self.config.paper and self.config.sizing.use_live_balance:
             self._sync_live_sizing()
+
+    def _sync_risk_from_journal(self) -> None:
+        """Restore in-memory risk state from open journal trades after restart."""
+        pending = [t for t in self.journal.pending_trades() if t.passed]
+        self.risk.state.open_positions = len(pending)
+        for trade in pending:
+            self.risk.state.traded_tickers.add(trade.ticker)
+            if trade.opened_ts > self.risk.state.last_trade_ts:
+                self.risk.state.last_trade_ts = trade.opened_ts
 
     def _balance_usd(self) -> float | None:
         if not self.client.authenticated:
@@ -180,6 +195,7 @@ class HourlyBot:
     def run_cycle(self) -> list[dict]:
         """Scan KXBTCD, evaluate Kalshi card strikes only, trade best of top 3."""
         self._sync_live_sizing()
+        early_exits = self._manage_open_positions()
         now = datetime.now(timezone.utc)
         data = self.feed.refresh()
         candidates: list[MarketCandidate] = []
@@ -359,9 +375,198 @@ class HourlyBot:
             best=best,
             best_ticker=best_ticker,
             markets_scanned=scanned,
+            early_exits=early_exits,
         )
 
         return decisions
+
+    def _build_open_positions_view(self) -> list[dict[str, Any]]:
+        views: list[dict[str, Any]] = []
+        for trade in self.journal.pending_trades():
+            if not trade.passed:
+                continue
+            levels = compute_exit_levels(
+                trade.entry_price,
+                self.config.exit,
+                stored_tp=trade.tp_price,
+                stored_sl=trade.sl_price,
+            )
+            bid = None
+            try:
+                raw = self.client._request("GET", f"/markets/{trade.ticker}")
+                market = normalize_market(raw.get("market", raw))
+                bid = bid_for_side(market, trade.side)
+            except Exception:
+                logger.debug("open position quote failed for %s", trade.ticker, exc_info=True)
+            unrealized = None
+            if bid is not None:
+                unrealized = (bid - trade.entry_price) * trade.contracts
+            views.append(
+                {
+                    "trade_id": trade.id,
+                    "ticker": trade.ticker,
+                    "side": trade.side,
+                    "finish": trade.finish,
+                    "contracts": trade.contracts,
+                    "entry_price": trade.entry_price,
+                    "entry_cents": round(trade.entry_price * 100),
+                    "tp_price": levels.take_profit_price,
+                    "tp_cents": round(levels.take_profit_price * 100),
+                    "sl_price": levels.stop_loss_price,
+                    "sl_cents": round(levels.stop_loss_price * 100),
+                    "bid_price": bid,
+                    "bid_cents": round(bid * 100) if bid is not None else None,
+                    "unrealized_pnl_usd": round(unrealized, 4) if unrealized is not None else None,
+                    "exit_enabled": self.config.exit.enabled,
+                    "take_profit_pct": self.config.exit.take_profit_pct,
+                    "stop_loss_pct": self.config.exit.stop_loss_pct,
+                }
+            )
+        return views
+
+    def _manage_open_positions(self) -> list[dict[str, Any]]:
+        """Check open positions each cycle and sell when TP/SL triggers."""
+        if not self.config.exit.enabled:
+            return []
+        exits: list[dict[str, Any]] = []
+        now = time.time()
+        for trade in self.journal.pending_trades():
+            if not trade.passed:
+                continue
+            if now - trade.opened_ts < self.config.exit.min_hold_seconds:
+                continue
+            try:
+                raw = self.client._request("GET", f"/markets/{trade.ticker}")
+            except Exception:
+                logger.debug("exit check failed for %s", trade.ticker, exc_info=True)
+                continue
+            market = normalize_market(raw.get("market", raw))
+            bid = bid_for_side(market, trade.side)
+            if bid is None:
+                continue
+            levels = compute_exit_levels(
+                trade.entry_price,
+                self.config.exit,
+                stored_tp=trade.tp_price,
+                stored_sl=trade.sl_price,
+            )
+            signal = evaluate_exit(
+                entry_price=trade.entry_price,
+                bid_price=bid,
+                contracts=trade.contracts,
+                cfg=self.config.exit,
+                levels=levels,
+            )
+            if signal is None:
+                continue
+            result = self._execute_exit(trade, signal)
+            if result:
+                exits.append(result)
+        return exits
+
+    def _execute_exit(self, trade: TradeRecord, signal: Any) -> dict[str, Any] | None:
+        mode = "PAPER" if self.config.paper else "LIVE"
+        price_cents = max(1, int(round(signal.exit_price * 100)))
+        proceeds = signal.exit_price * trade.contracts
+
+        if self.config.paper:
+            self.journal.close_trade_early(
+                trade.id,
+                exit_price=signal.exit_price,
+                exit_reason=signal.reason,
+                pnl=signal.pnl_total,
+            )
+            self.risk.close_position(trade.ticker, proceeds)
+            logger.info(
+                "PAPER exit %s %s x%d @ %.0f¢ (%s) pnl=$%.2f",
+                trade.side.upper(),
+                trade.ticker,
+                trade.contracts,
+                signal.exit_price * 100,
+                signal.reason,
+                signal.pnl_total,
+            )
+            self.notifier.notify_exit(
+                mode=mode,
+                ticker=trade.ticker,
+                side=trade.side,
+                contracts=trade.contracts,
+                entry_price=trade.entry_price,
+                exit_price=signal.exit_price,
+                reason=signal.reason,
+                pnl=signal.pnl_total,
+            )
+            return {
+                "ticker": trade.ticker,
+                "side": trade.side,
+                "reason": signal.reason,
+                "exit_price": signal.exit_price,
+                "pnl": signal.pnl_total,
+                "mode": mode,
+            }
+
+        try:
+            resp = self.client.place_order(
+                ticker=trade.ticker,
+                side=trade.side,
+                action="sell",
+                count=trade.contracts,
+                price_cents=price_cents,
+            )
+            order_id = str(
+                resp.get("order", {}).get("order_id")
+                or resp.get("order_id")
+                or resp.get("order", {}).get("id")
+                or resp.get("id")
+                or "ok"
+            )
+            self.journal.close_trade_early(
+                trade.id,
+                exit_price=signal.exit_price,
+                exit_reason=signal.reason,
+                pnl=signal.pnl_total,
+                exit_order_id=order_id,
+            )
+            self.risk.close_position(trade.ticker, proceeds)
+            logger.info(
+                "LIVE exit %s %s x%d @ %d¢ (%s) pnl=$%.2f order=%s",
+                trade.side.upper(),
+                trade.ticker,
+                trade.contracts,
+                price_cents,
+                signal.reason,
+                signal.pnl_total,
+                order_id,
+            )
+            self.notifier.notify_exit(
+                mode=mode,
+                ticker=trade.ticker,
+                side=trade.side,
+                contracts=trade.contracts,
+                entry_price=trade.entry_price,
+                exit_price=signal.exit_price,
+                reason=signal.reason,
+                pnl=signal.pnl_total,
+                order_id=order_id,
+            )
+            return {
+                "ticker": trade.ticker,
+                "side": trade.side,
+                "reason": signal.reason,
+                "exit_price": signal.exit_price,
+                "pnl": signal.pnl_total,
+                "order_id": order_id,
+                "mode": mode,
+            }
+        except Exception:
+            logger.exception("exit order failed for %s", trade.ticker)
+            self.notifier.notify_order_failed(
+                ticker=trade.ticker,
+                side=trade.side,
+                contracts=trade.contracts,
+                price=signal.exit_price,
+            )
+            return None
 
     def _publish_dashboard(
         self,
@@ -372,6 +577,7 @@ class HourlyBot:
         best: MarketCandidate | None,
         best_ticker: str | None,
         markets_scanned: int,
+        early_exits: list[dict[str, Any]] | None = None,
     ) -> None:
         mode = "PAPER" if self.config.paper else "LIVE"
         balance = self._balance_usd()
@@ -385,6 +591,10 @@ class HourlyBot:
                     won=bool(item.get("won")),
                     pnl=float(item.get("pnl") or 0.0),
                     result=str(item.get("result") or ""),
+                )
+                self.risk.close_position(
+                    str(item.get("ticker") or ""),
+                    float(item.get("pnl") or 0.0) + float(item.get("cost_usd") or 0.0),
                 )
                 # Update crowd adaptive weights when we know outcome
                 for cand in candidates:
@@ -406,6 +616,8 @@ class HourlyBot:
             balance_usd=balance,
             mode=mode,
             recent_settlements=settlements,
+            open_positions=self._build_open_positions_view(),
+            early_exits=early_exits or [],
         )
         save_snapshot(snapshot)
 
@@ -445,6 +657,9 @@ class HourlyBot:
         cost = contracts * price
         mode = "PAPER" if self.config.paper else "LIVE"
         meta = meta or {}
+        levels = compute_exit_levels(price, self.config.exit) if self.config.exit.enabled else None
+        tp_price = levels.take_profit_price if levels else None
+        sl_price = levels.stop_loss_price if levels else None
         if self.config.paper:
             logger.info(
                 "PAPER %s %s x%d @ %.0f¢ ($%.2f)",
@@ -469,6 +684,8 @@ class HourlyBot:
                 strike=float(meta.get("strike", 0)),
                 spot=float(meta.get("spot", 0)),
                 finish=str(meta.get("finish", "")),
+                tp_price=tp_price,
+                sl_price=sl_price,
             )
             self.notifier.notify_trade(
                 mode=mode,
@@ -513,6 +730,8 @@ class HourlyBot:
                 strike=float(meta.get("strike", 0)),
                 spot=float(meta.get("spot", 0)),
                 finish=str(meta.get("finish", "")),
+                tp_price=tp_price,
+                sl_price=sl_price,
             )
             logger.info(
                 "LIVE order placed: %s %s x%d @ %d¢ ($%.2f) order=%s",
