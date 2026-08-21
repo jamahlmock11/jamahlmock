@@ -110,6 +110,7 @@ class NotifyConfig:
     notify_on_order_failed: bool = True
     notify_on_paper: bool = False
     notify_on_startup: bool = False
+    twilio_trial_template: str = ""  # e.g. sms_appointment_reminders on Twilio trial accounts
 
     @property
     def configured(self) -> bool:
@@ -190,6 +191,7 @@ def load_config() -> BotConfig:
         notify_on_order_failed=os.getenv("NOTIFY_ON_ORDER_FAILED", "true").lower() not in ("false", "0", "no"),
         notify_on_paper=os.getenv("NOTIFY_ON_PAPER", "false").lower() in ("true", "1", "yes"),
         notify_on_startup=os.getenv("NOTIFY_ON_STARTUP", "false").lower() in ("true", "1", "yes"),
+        twilio_trial_template=os.getenv("TWILIO_TRIAL_TEMPLATE", ""),
     )
     return cfg
 

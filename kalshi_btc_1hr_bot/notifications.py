@@ -62,7 +62,10 @@ class PhoneNotifier:
             return False
 
         text = body.strip()
-        if len(text) > 1500:
+        if self.config.twilio_trial_template:
+            log.info("Twilio trial template SMS (intended: %s)", text[:120])
+            text = self.config.twilio_trial_template
+        elif len(text) > 1500:
             text = text[:1497] + "..."
 
         url = f"https://api.twilio.com/2010-04-01/Accounts/{self.config.twilio_account_sid}/Messages.json"
@@ -76,7 +79,10 @@ class PhoneNotifier:
                 data={"To": to_num, "From": from_num, "Body": text},
             )
             if resp.status_code >= 400:
-                log.error("Twilio SMS failed %s: %s", resp.status_code, resp.text[:300])
+                err = resp.text[:300]
+                if not self.config.twilio_trial_template and "572006" in err:
+                    log.warning("Twilio trial account — retry with TWILIO_TRIAL_TEMPLATE=sms_appointment_reminders")
+                log.error("Twilio SMS failed %s: %s", resp.status_code, err)
                 return False
             sid = resp.json().get("sid", "ok")
             log.info("SMS sent to %s sid=%s", to_num[-4:].rjust(len(to_num), "*"), sid)

@@ -19,6 +19,25 @@ def test_notifier_skips_when_not_configured():
     assert notifier.send("hello") is False
 
 
+def test_notifier_uses_trial_template():
+    cfg = NotifyConfig(
+        enabled=True,
+        phone_to="+15551234567",
+        twilio_account_sid="ACtest",
+        twilio_auth_token="secret",
+        twilio_from="+15559876543",
+        twilio_trial_template="sms_appointment_reminders",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 201
+    mock_resp.json.return_value = {"sid": "SM123"}
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_resp
+    notifier = PhoneNotifier(cfg, client=mock_client)
+    notifier.send("custom trade message should not be sent")
+    assert mock_client.post.call_args.kwargs["data"]["Body"] == "sms_appointment_reminders"
+
+
 def test_notifier_sends_via_twilio():
     cfg = NotifyConfig(
         enabled=True,
