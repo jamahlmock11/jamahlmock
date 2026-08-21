@@ -8,7 +8,7 @@ from kalshi_btc_1hr_bot import config
 from kalshi_btc_1hr_bot.dynamic_gates import DynamicThresholds
 from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
 from kalshi_btc_1hr_bot.ensemble import ModelVote
-from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput
+from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput, agreement_score_for_gates
 
 
 @dataclass(frozen=True)
@@ -81,10 +81,16 @@ def evaluate_edge_with_evidence(
     min_agreement: float | None = None,
     min_quorum: int | None = None,
     min_crowd_favorite: float | None = None,
+    crowd_gates_enabled: bool | None = None,
+    use_ensemble_agreement: bool | None = None,
     thresholds: DynamicThresholds | None = None,
     forecast: ForecastEnsembleOutput | None = None,
 ) -> TradeSignal:
     """Evaluate edge only on the evidence-backed side (above/below strike)."""
+    crowd_on = config.CROWD_GATES_ENABLED if crowd_gates_enabled is None else crowd_gates_enabled
+    use_ensemble = (
+        config.USE_ENSEMBLE_AGREEMENT if use_ensemble_agreement is None else use_ensemble_agreement
+    )
     if thresholds is not None:
         min_margin = min_evidence_margin if min_evidence_margin is not None else thresholds.min_evidence_margin
         edge_floor = min_edge if min_edge is not None else thresholds.min_edge_cents
@@ -98,7 +104,13 @@ def evaluate_edge_with_evidence(
         quorum_floor = min_quorum if min_quorum is not None else config.CROWD_MIN_QUORUM
         crowd_floor = min_crowd_favorite if min_crowd_favorite is not None else config.CROWD_MIN_FAVORITE
 
-    if forecast is not None and forecast.crowd.quorum_count < quorum_floor:
+    agree_score = (
+        agreement_score_for_gates(forecast, use_ensemble=use_ensemble)
+        if forecast is not None
+        else 0.0
+    )
+
+    if crowd_on and forecast is not None and forecast.crowd.quorum_count < quorum_floor:
         crowd = forecast.crowd
         return TradeSignal(
             False,
@@ -110,7 +122,7 @@ def evaluate_edge_with_evidence(
             f"Crowd quorum {crowd.quorum_count}/{quorum_floor} on {crowd.consensus_side.upper()}",
         )
 
-    if forecast is not None and forecast.agreement_score < agree_floor:
+    if forecast is not None and agree_score < agree_floor:
         return TradeSignal(
             False,
             direction.side,
@@ -118,10 +130,10 @@ def evaluate_edge_with_evidence(
             yes_ask if direction.side == "yes" else no_ask,
             0.0,
             0.0,
-            f"Agreement {forecast.agreement_score:.0%} < min {agree_floor:.0%}",
+            f"Ensemble agreement {agree_score:.0%} < min {agree_floor:.0%}",
         )
 
-    if forecast is not None and not forecast.crowd.side_met(direction.side, min_favorite=crowd_floor):
+    if crowd_on and forecast is not None and not forecast.crowd.side_met(direction.side, min_favorite=crowd_floor):
         crowd = forecast.crowd
         finish = "ABOVE" if direction.side == "yes" else "BELOW"
         return TradeSignal(

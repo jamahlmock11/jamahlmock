@@ -66,6 +66,17 @@ class ForecastEnsembleOutput:
         return crowd_summary(self.crowd, min_favorite=min_favorite)
 
 
+def agreement_score_for_gates(
+    forecast: ForecastEnsembleOutput,
+    *,
+    use_ensemble: bool = True,
+) -> float:
+    """Agreement metric used for trade gates — ensemble or crowd voters."""
+    if use_ensemble:
+        return forecast.ensemble.agreement_score
+    return forecast.agreement_score
+
+
 class ForecastEnsemble:
     """5-layer model + crowd forecast system."""
 

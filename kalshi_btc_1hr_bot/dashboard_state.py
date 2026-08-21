@@ -13,6 +13,7 @@ from kalshi_btc_1hr_bot import config
 from kalshi_btc_1hr_bot.config import BotConfig, ROOT
 from kalshi_btc_1hr_bot.dynamic_gates import DynamicThresholds, resolve_dynamic_thresholds
 from kalshi_btc_1hr_bot.evidence import MarketCandidate
+from kalshi_btc_1hr_bot.forecast import agreement_score_for_gates
 from kalshi_btc_1hr_bot.risk import RiskManager
 
 STATE_PATH = ROOT / "data" / "dashboard_state.json"
@@ -143,9 +144,15 @@ def build_checklist(
         th = resolve_dynamic_thresholds(
             gate_cand.secs_left,
             vol_regime=gate_cand.forecast.vol_regime,
-            agreement_score=gate_cand.forecast.agreement_score,
+            agreement_score=agreement_score_for_gates(
+                gate_cand.forecast, use_ensemble=cfg.gates.use_ensemble_agreement
+            ),
             edge_cents=gate_cand.edge.edge_cents,
-            crowd_side_prob=gate_cand.forecast.crowd.side_prob(gate_cand.direction.side),
+            crowd_side_prob=(
+                gate_cand.forecast.crowd.side_prob(gate_cand.direction.side)
+                if cfg.gates.crowd_gates_enabled
+                else None
+            ),
         )
 
     cf_rng = th.crowd_favorite_range
@@ -159,20 +166,32 @@ def build_checklist(
         if not cfg.edge.subtract_fees_from_edge
         else f"{gate_cand.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee"
     )
-    items.extend(
-        [
-            CheckItem(
-                f"Evidence margin ≥ {th.min_evidence_margin:.3f} ({ev_rng[0]:.3f}–{ev_rng[1]:.3f})",
-                gate_cand.direction.margin >= th.min_evidence_margin,
-                f"{gate_cand.direction.margin:.3f} ({gate_cand.direction.finish_label}) · {th.bucket_label}",
-                "evidence",
-            ),
-            CheckItem(
-                f"{edge_label} ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
-                gate_cand.edge.should_trade or gate_cand.edge.edge_cents >= th.min_edge_cents,
-                edge_detail,
-                "edge",
-            ),
+    agree_score = agreement_score_for_gates(
+        gate_cand.forecast, use_ensemble=cfg.gates.use_ensemble_agreement
+    )
+    agree_label = "Ensemble agreement" if cfg.gates.use_ensemble_agreement else "Agreement"
+    gate_items: list[CheckItem] = [
+        CheckItem(
+            f"Evidence margin ≥ {th.min_evidence_margin:.3f} ({ev_rng[0]:.3f}–{ev_rng[1]:.3f})",
+            gate_cand.direction.margin >= th.min_evidence_margin,
+            f"{gate_cand.direction.margin:.3f} ({gate_cand.direction.finish_label}) · {th.bucket_label}",
+            "evidence",
+        ),
+        CheckItem(
+            f"{edge_label} ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
+            gate_cand.edge.should_trade or gate_cand.edge.edge_cents >= th.min_edge_cents,
+            edge_detail,
+            "edge",
+        ),
+        CheckItem(
+            f"{agree_label} ≥ {th.min_agreement:.0%} ({ag_rng[0]:.0%}–{ag_rng[1]:.0%})",
+            agree_score >= th.min_agreement,
+            f"{agree_score:.0%}",
+            "model",
+        ),
+    ]
+    if cfg.gates.crowd_gates_enabled:
+        gate_items[2:2] = [
             CheckItem(
                 f"Crowd quorum ≥ {th.min_quorum}",
                 gate_cand.forecast.crowd.quorum_count >= th.min_quorum,
@@ -194,12 +213,10 @@ def build_checklist(
                 ),
                 "crowd",
             ),
-            CheckItem(
-                f"Ensemble agreement ≥ {th.min_agreement:.0%} ({ag_rng[0]:.0%}–{ag_rng[1]:.0%})",
-                gate_cand.forecast.agreement_score >= th.min_agreement,
-                f"{gate_cand.forecast.agreement_score:.0%}",
-                "model",
-            ),
+        ]
+    items.extend(
+        gate_items
+        + [
             CheckItem(
                 "Top-4 market by edge + evidence pick",
                 is_pick and gate_cand.edge.should_trade,
@@ -294,67 +311,80 @@ def build_entry_context(
     crowd_need_pct = th.min_crowd_favorite_pct
     evidence_have = focus.direction.margin
     evidence_need = th.min_evidence_margin
-    agree_have = focus.forecast.agreement_score * 100.0
+    agree_have = (
+        agreement_score_for_gates(focus.forecast, use_ensemble=cfg.gates.use_ensemble_agreement) * 100.0
+    )
     agree_need = th.min_agreement * 100.0
+    agree_label = "Ensemble agreement" if cfg.gates.use_ensemble_agreement else "Agreement"
 
-    gates: list[dict[str, Any]] = [
-        {
-            "key": "quorum",
-            "label": "Crowd quorum",
-            "current": f"{quorum_have}/{quorum_need}",
-            "required": f"≥ {quorum_need}",
-            "delta": None if quorum_have >= quorum_need else f"need {quorum_need - quorum_have} more",
-            "passed": quorum_have >= quorum_need,
-        },
-        {
-            "key": "agreement",
-            "label": "Ensemble agreement",
-            "current": f"{agree_have:.1f}%",
-            "required": f"≥ {agree_need:.1f}%",
-            "delta": None if agree_have >= agree_need else f"+{agree_need - agree_have:.1f}pp",
-            "passed": agree_have >= agree_need,
-        },
-        {
-            "key": "crowd",
-            "label": f"Crowd {finish}",
-            "current": f"{crowd_side_pct:.1f}%",
-            "required": f"≥ {crowd_need_pct:.1f}%",
-            "delta": None if crowd_side_pct >= crowd_need_pct else f"+{crowd_need_pct - crowd_side_pct:.1f}pp",
-            "passed": crowd_side_pct >= crowd_need_pct,
-        },
-        {
-            "key": "evidence",
-            "label": "Evidence margin",
-            "current": f"{evidence_have:.3f}",
-            "required": f"≥ {evidence_need:.3f}",
-            "delta": None if evidence_have >= evidence_need else f"+{evidence_need - evidence_have:.3f}",
-            "passed": evidence_have >= evidence_need,
-        },
-        {
-            "key": "edge",
-            "label": "Edge (gross)" if not cfg.edge.subtract_fees_from_edge else "Net edge",
-            "current": f"{edge_have:.1f}¢",
-            "required": f"≥ {edge_need:.1f}¢",
-            "delta": None if edge_have >= edge_need else f"+{edge_delta:.1f}¢",
-            "passed": focus.edge.should_trade or edge_have >= edge_need,
-        },
-        {
-            "key": "risk",
-            "label": "Risk gate",
-            "current": "ok" if allowed else block_reason,
-            "required": "allowed",
-            "delta": None if allowed else block_reason,
-            "passed": allowed,
-        },
-        {
-            "key": "sizing",
-            "label": "Kelly size",
-            "current": f"{contracts} contracts",
-            "required": "> 0",
-            "delta": None if contracts > 0 else "blocked by upstream gates",
-            "passed": contracts > 0,
-        },
-    ]
+    gates: list[dict[str, Any]] = []
+    if cfg.gates.crowd_gates_enabled:
+        gates.extend(
+            [
+                {
+                    "key": "quorum",
+                    "label": "Crowd quorum",
+                    "current": f"{quorum_have}/{quorum_need}",
+                    "required": f"≥ {quorum_need}",
+                    "delta": None if quorum_have >= quorum_need else f"need {quorum_need - quorum_have} more",
+                    "passed": quorum_have >= quorum_need,
+                },
+                {
+                    "key": "crowd",
+                    "label": f"Crowd {finish}",
+                    "current": f"{crowd_side_pct:.1f}%",
+                    "required": f"≥ {crowd_need_pct:.1f}%",
+                    "delta": None
+                    if crowd_side_pct >= crowd_need_pct
+                    else f"+{crowd_need_pct - crowd_side_pct:.1f}pp",
+                    "passed": crowd_side_pct >= crowd_need_pct,
+                },
+            ]
+        )
+    gates.extend(
+        [
+            {
+                "key": "agreement",
+                "label": agree_label,
+                "current": f"{agree_have:.1f}%",
+                "required": f"≥ {agree_need:.1f}%",
+                "delta": None if agree_have >= agree_need else f"+{agree_need - agree_have:.1f}pp",
+                "passed": agree_have >= agree_need,
+            },
+            {
+                "key": "evidence",
+                "label": "Evidence margin",
+                "current": f"{evidence_have:.3f}",
+                "required": f"≥ {evidence_need:.3f}",
+                "delta": None if evidence_have >= evidence_need else f"+{evidence_need - evidence_have:.3f}",
+                "passed": evidence_have >= evidence_need,
+            },
+            {
+                "key": "edge",
+                "label": "Edge (gross)" if not cfg.edge.subtract_fees_from_edge else "Net edge",
+                "current": f"{edge_have:.1f}¢",
+                "required": f"≥ {edge_need:.1f}¢",
+                "delta": None if edge_have >= edge_need else f"+{edge_delta:.1f}¢",
+                "passed": focus.edge.should_trade or edge_have >= edge_need,
+            },
+            {
+                "key": "risk",
+                "label": "Risk gate",
+                "current": "ok" if allowed else block_reason,
+                "required": "allowed",
+                "delta": None if allowed else block_reason,
+                "passed": allowed,
+            },
+            {
+                "key": "sizing",
+                "label": "Kelly size",
+                "current": f"{contracts} contracts",
+                "required": "> 0",
+                "delta": None if contracts > 0 else "blocked by upstream gates",
+                "passed": contracts > 0,
+            },
+        ]
+    )
 
     binding = next((g for g in gates if not g["passed"]), None)
     if binding:
@@ -411,17 +441,21 @@ def build_entry_context(
             "edge_vs_kalshi_cents": round(fair_side_pct - trade_ask_c, 1),
             "evidence_margin": round(evidence_have, 4),
             "agreement_pct": round(agree_have, 1),
+            "ensemble_agreement_pct": round(agree_have, 1),
             "confidence_pct": round(focus.forecast.confidence * 100, 1),
         },
         "requirements": {
             "min_edge_cents": round(edge_need, 2),
-            "min_crowd_pct": round(crowd_need_pct, 1),
+            "min_crowd_pct": round(crowd_need_pct, 1) if cfg.gates.crowd_gates_enabled else None,
+            "min_ensemble_agreement_pct": round(agree_need, 1),
             "min_evidence_margin": round(evidence_need, 4),
             "min_agreement_pct": round(agree_need, 1),
-            "min_quorum": quorum_need,
+            "min_quorum": quorum_need if cfg.gates.crowd_gates_enabled else None,
             "max_entry_price_cents": max_entry,
             "price_to_clear_cents": round(price_delta_c, 1) if price_delta_c is not None else None,
         },
+        "crowd_gates_enabled": cfg.gates.crowd_gates_enabled,
+        "use_ensemble_agreement": cfg.gates.use_ensemble_agreement,
         "gates": gates,
         "risk": {
             "allowed": allowed,
@@ -473,9 +507,15 @@ def build_snapshot(
         focus_th = focus.thresholds or resolve_dynamic_thresholds(
             focus.secs_left,
             vol_regime=focus.forecast.vol_regime,
-            agreement_score=focus.forecast.agreement_score,
+            agreement_score=agreement_score_for_gates(
+                focus.forecast, use_ensemble=cfg.gates.use_ensemble_agreement
+            ),
             edge_cents=focus.edge.edge_cents,
-            crowd_side_prob=focus.forecast.crowd.side_prob(focus.direction.side),
+            crowd_side_prob=(
+                focus.forecast.crowd.side_prob(focus.direction.side)
+                if cfg.gates.crowd_gates_enabled
+                else None
+            ),
         )
         allowed, block_reason = risk.allow_trade(
             ticker=focus.ticker, seconds_to_expiry=focus.secs_left
@@ -659,6 +699,8 @@ def build_snapshot(
             "bucket": focus_th.bucket.value if focus_th else None,
             "bucket_label": focus_th.bucket_label if focus_th else None,
             "dynamic_gates": True,
+            "crowd_gates_enabled": cfg.gates.crowd_gates_enabled,
+            "use_ensemble_agreement": cfg.gates.use_ensemble_agreement,
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,

@@ -34,7 +34,22 @@ pip install -r requirements.txt
 python backtest.py --synthetic --n-markets 100   # synthetic backtest
 python bot.py --paper --once                       # single paper trade cycle
 python bot.py --paper                              # continuous paper trading
+python bot.py --live                               # live trading (requires API keys)
+python dashboard.py                                # web dashboard → http://127.0.0.1:8090
+make dashboard                                     # same, via Makefile
 ```
+
+### Dashboard
+
+Live command center at **http://127.0.0.1:8090** (port configurable via `DASHBOARD_PORT`).
+
+```bash
+make -C kalshi_btc_1hr_bot dashboard
+# or
+PYTHONPATH=.. python kalshi_btc_1hr_bot/dashboard.py
+```
+
+Shows the **Currently** panel (Kalshi vs entry gates), top markets, trade journal, and scan status. Requires the bot running to refresh `data/dashboard_state.json`.
 
 ---
 

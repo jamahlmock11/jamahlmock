@@ -155,7 +155,15 @@ def test_crowd_favorite_gate_blocks_below_dynamic_floor():
     ens = EnsembleResult(0.6, 0.4, 0.7, 0.2, 0.8, tuple(votes))
     forecast = ForecastEnsembleOutput(0.6, 0.7, 0.8, 0.2, mo, ens, crowd, True)
     edge = evaluate_edge_with_evidence(
-        0.6, 0.40, 0.65, 0.38, 0.63, direction, thresholds=th, forecast=forecast
+        0.6,
+        0.40,
+        0.65,
+        0.38,
+        0.63,
+        direction,
+        crowd_gates_enabled=True,
+        thresholds=th,
+        forecast=forecast,
     )
     assert not edge.should_trade
     assert "Crowd" in edge.reason

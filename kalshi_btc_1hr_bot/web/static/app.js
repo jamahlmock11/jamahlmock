@@ -234,9 +234,11 @@
       "</span></div>" +
       '<div class="currently-kv"><span class="k">Need for entry</span><span class="v">edge ≥ ' +
       req.min_edge_cents +
-      "¢ · crowd ≥ " +
-      req.min_crowd_pct +
-      "%</span></div>" +
+      "¢ · ensemble ≥ " +
+      (req.min_ensemble_agreement_pct != null ? req.min_ensemble_agreement_pct : req.min_agreement_pct) +
+      "%" +
+      (req.min_crowd_pct != null ? " · crowd ≥ " + req.min_crowd_pct + "%" : "") +
+      "</span></div>" +
       (priceHint
         ? '<div class="price-hint">' + priceHint + "</div>"
         : "") +

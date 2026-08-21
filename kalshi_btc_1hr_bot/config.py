@@ -11,6 +11,8 @@ MIN_EDGE_CENTS = 2.5
 FEE_PER_CONTRACT_CENTS = 1.75  # accounting only; gates ignore fees when SUBTRACT_FEES_FROM_EDGE=false
 SUBTRACT_FEES_FROM_EDGE = False
 DYNAMIC_GATES_ENABLED = True
+CROWD_GATES_ENABLED = False  # quorum + crowd favorite % no longer block trades
+USE_ENSEMBLE_AGREEMENT = True  # agreement gate uses 5-layer ensemble, not crowd voters
 RISK_MIN_SECONDS = 120.0
 # Hard quality floors — gates may loosen inside buckets but never below these
 GATE_ABS_MIN_CROWD = 0.60
@@ -132,6 +134,13 @@ class NotifyConfig:
 
 
 @dataclass
+class GateConfig:
+    crowd_gates_enabled: bool = CROWD_GATES_ENABLED
+    use_ensemble_agreement: bool = USE_ENSEMBLE_AGREEMENT
+    dynamic_gates_enabled: bool = DYNAMIC_GATES_ENABLED
+
+
+@dataclass
 class BotConfig:
     series_ticker: str = "KXBTCD"
     window_seconds: int = WINDOW_SECONDS
@@ -143,6 +152,7 @@ class BotConfig:
     sizing: SizingConfig = field(default_factory=SizingConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    gates: GateConfig = field(default_factory=GateConfig)
 
     kalshi_env: str = field(default_factory=lambda: os.getenv("KALSHI_ENV", "public"))
     kalshi_api_key_id: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY_ID", ""))
@@ -180,6 +190,15 @@ def load_config() -> BotConfig:
         pass
 
     cfg = BotConfig()
+    cfg.gates.crowd_gates_enabled = os.getenv(
+        "CROWD_GATES_ENABLED", "false" if not CROWD_GATES_ENABLED else "true"
+    ).lower() in ("true", "1", "yes")
+    cfg.gates.use_ensemble_agreement = os.getenv(
+        "USE_ENSEMBLE_AGREEMENT", "true" if USE_ENSEMBLE_AGREEMENT else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.gates.dynamic_gates_enabled = os.getenv(
+        "DYNAMIC_GATES_ENABLED", "true" if DYNAMIC_GATES_ENABLED else "false"
+    ).lower() in ("true", "1", "yes")
     cfg.edge.subtract_fees_from_edge = os.getenv(
         "SUBTRACT_FEES_FROM_EDGE", "false" if not SUBTRACT_FEES_FROM_EDGE else "true"
     ).lower() in ("true", "1", "yes")

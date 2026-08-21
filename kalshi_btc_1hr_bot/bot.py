@@ -21,7 +21,7 @@ from kalshi_btc_1hr_bot.evidence import (
     evidence_score,
     select_best_from_top_markets,
 )
-from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data
+from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data, agreement_score_for_gates
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.notifications import NotifyConfig, PhoneNotifier
 from kalshi_btc_1hr_bot.risk import RiskManager
@@ -122,13 +122,22 @@ class HourlyBot:
                 no_bid_f = float(market.get("no_bid") or no_ask_f)
 
                 side_prob = forecast.crowd.side_prob(direction.side)
+                agree_score = agreement_score_for_gates(
+                    forecast, use_ensemble=self.config.gates.use_ensemble_agreement
+                )
                 thresholds = resolve_dynamic_thresholds(
                     secs,
                     vol_regime=forecast.vol_regime,
-                    agreement_score=forecast.agreement_score,
-                    crowd_side_prob=side_prob,
+                    agreement_score=agree_score,
+                    crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
                 )
-                aligned = apply_dynamic_thresholds(forecast, thresholds, direction.side)
+                aligned = apply_dynamic_thresholds(
+                    forecast,
+                    thresholds,
+                    direction.side,
+                    crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                    use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+                )
                 edge_fee = gate_fee_cents(
                     self.config.edge.fee_per_contract_cents,
                     subtract=self.config.edge.subtract_fees_from_edge,
@@ -142,6 +151,8 @@ class HourlyBot:
                     direction,
                     fee_cents=edge_fee,
                     subtract_fees=self.config.edge.subtract_fees_from_edge,
+                    crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                    use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
                     thresholds=thresholds,
                     forecast=aligned,
                 )
@@ -151,11 +162,17 @@ class HourlyBot:
                     thresholds = resolve_dynamic_thresholds(
                         secs,
                         vol_regime=forecast.vol_regime,
-                        agreement_score=forecast.agreement_score,
+                        agreement_score=agree_score,
                         edge_cents=edge.edge_cents,
-                        crowd_side_prob=side_prob,
+                        crowd_side_prob=side_prob if self.config.gates.crowd_gates_enabled else None,
                     )
-                    aligned = apply_dynamic_thresholds(forecast, thresholds, direction.side)
+                    aligned = apply_dynamic_thresholds(
+                        forecast,
+                        thresholds,
+                        direction.side,
+                        crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                        use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
+                    )
                     edge = evaluate_edge_with_evidence(
                         aligned.p_fair,
                         yes_ask_f,
@@ -165,6 +182,8 @@ class HourlyBot:
                         direction,
                         fee_cents=edge_fee,
                         subtract_fees=self.config.edge.subtract_fees_from_edge,
+                        crowd_gates_enabled=self.config.gates.crowd_gates_enabled,
+                        use_ensemble_agreement=self.config.gates.use_ensemble_agreement,
                         thresholds=thresholds,
                         forecast=aligned,
                     )

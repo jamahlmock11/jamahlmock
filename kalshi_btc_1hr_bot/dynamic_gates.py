@@ -260,12 +260,22 @@ def apply_dynamic_thresholds(
     forecast: Any,
     thresholds: DynamicThresholds,
     trade_side: str,
+    *,
+    crowd_gates_enabled: bool | None = None,
+    use_ensemble_agreement: bool | None = None,
 ) -> Any:
-    """Align crowd confidence, quorum, and notes with dynamic gates for the trade side."""
+    """Align confidence and notes with dynamic gates for the trade side."""
     from dataclasses import replace
 
     from kalshi_btc_1hr_bot import config
     from kalshi_btc_1hr_bot.crowd_forecast import CrowdForecast
+    from kalshi_btc_1hr_bot.forecast import agreement_score_for_gates
+
+    crowd_on = config.CROWD_GATES_ENABLED if crowd_gates_enabled is None else crowd_gates_enabled
+    use_ensemble = (
+        config.USE_ENSEMBLE_AGREEMENT if use_ensemble_agreement is None else use_ensemble_agreement
+    )
+    agree_score = agreement_score_for_gates(forecast, use_ensemble=use_ensemble)
 
     crowd: CrowdForecast = forecast.crowd
     side = trade_side.lower()
@@ -275,28 +285,29 @@ def apply_dynamic_thresholds(
 
     total_w = sum(max(m.weight, 0.0) for m in crowd.members) or 1.0
     confidence = sum(m.confidence * m.weight for m in crowd.members) / total_w
-    confidence *= crowd.agreement_score
+    confidence *= agree_score
 
-    if side_quorum < thresholds.min_quorum:
+    if crowd_on and side_quorum < thresholds.min_quorum:
         confidence *= side_quorum / max(thresholds.min_quorum, 1)
-    if side_prob < thresholds.min_crowd_favorite:
+    if crowd_on and side_prob < thresholds.min_crowd_favorite:
         confidence *= side_prob / max(thresholds.min_crowd_favorite, 0.01)
-    if crowd.agreement_score < thresholds.min_agreement:
-        confidence *= crowd.agreement_score / max(thresholds.min_agreement, 0.01)
+    if agree_score < thresholds.min_agreement:
+        confidence *= agree_score / max(thresholds.min_agreement, 0.01)
     if not forecast.is_official_brti:
         confidence *= config.PROXY_BRTI_CONFIDENCE_PENALTY
 
     notes: list[str] = []
-    if side_quorum < thresholds.min_quorum:
+    if crowd_on and side_quorum < thresholds.min_quorum:
         notes.append(f"Crowd quorum {side_quorum}/{thresholds.min_quorum} on {side.upper()}")
-    if side_prob < thresholds.min_crowd_favorite:
+    if crowd_on and side_prob < thresholds.min_crowd_favorite:
         notes.append(
             f"Crowd {finish} {side_prob:.0%} < {thresholds.min_crowd_favorite:.0%} "
             f"({thresholds.bucket_label})"
         )
-    if crowd.agreement_score < thresholds.min_agreement:
+    if agree_score < thresholds.min_agreement:
+        label = "Ensemble agreement" if use_ensemble else "Agreement"
         notes.append(
-            f"Agreement {crowd.agreement_score:.0%} < {thresholds.min_agreement:.0%} "
+            f"{label} {agree_score:.0%} < {thresholds.min_agreement:.0%} "
             f"({thresholds.bucket_label})"
         )
     if not forecast.is_official_brti:
