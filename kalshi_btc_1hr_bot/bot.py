@@ -12,7 +12,7 @@ from typing import Any
 from kalshi_btc_1hr_bot.config import BotConfig, load_config, require_live_credentials
 from kalshi_btc_1hr_bot.dashboard_state import build_snapshot, save_snapshot
 from kalshi_btc_1hr_bot.data_feed import DataFeed
-from kalshi_btc_1hr_bot.dynamic_gates import resolve_dynamic_thresholds
+from kalshi_btc_1hr_bot.dynamic_gates import apply_dynamic_thresholds, resolve_dynamic_thresholds
 from kalshi_btc_1hr_bot.evidence import (
     MarketCandidate,
     directional_evidence,
@@ -112,6 +112,7 @@ class HourlyBot:
                     agreement_score=forecast.agreement_score,
                     crowd_side_prob=forecast.crowd.side_prob(direction.side),
                 )
+                forecast = apply_dynamic_thresholds(forecast, thresholds, direction.side)
 
                 edge = evaluate_edge_with_evidence(
                     forecast.p_fair,

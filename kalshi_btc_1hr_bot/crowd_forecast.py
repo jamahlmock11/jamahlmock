@@ -302,26 +302,13 @@ class CrowdForecastSystem:
         uncertainty = min(1.0, spread * 1.2)
         confidence = sum(m.confidence * m.weight for m in members) / total_w
         confidence *= agreement
-        if not quorum_met:
-            confidence *= quorum_count / max(quorum_required, 1)
 
         disagreeing = tuple(m.name for m in members if m.side != consensus)
         top = _top_members(members, config.TOP_N_VOTES)
-        favorite_prob = prob_yes if consensus == "yes" else prob_no
-        if favorite_prob < config.CROWD_MIN_FAVORITE:
-            confidence *= favorite_prob / max(config.CROWD_MIN_FAVORITE, 0.01)
 
         notes: list[str] = []
-        if not quorum_met:
-            notes.append(f"Crowd quorum {quorum_count}/{quorum_required} on {consensus.upper()}")
-        if favorite_prob < config.CROWD_MIN_FAVORITE:
-            notes.append(
-                f"Crowd favorite {favorite_prob:.0%} < {config.CROWD_MIN_FAVORITE:.0%} on {consensus.upper()}"
-            )
-        if agreement < config.ENSEMBLE_MIN_AGREEMENT:
-            notes.append(f"Crowd disagreement ({agreement:.0%} agreement)")
         if not state.is_official_brti:
-            notes.append("Proxy BRTI — crowd confidence reduced")
+            notes.append("Proxy BRTI — unofficial feed")
 
         return CrowdForecast(
             prob_yes=prob_yes,

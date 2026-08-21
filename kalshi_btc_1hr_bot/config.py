@@ -46,7 +46,7 @@ ENSEMBLE_MIN_AGREEMENT = 0.55
 # Crowd forecast system
 CROWD_SYNTHESIS = "blend"  # weighted | median | trimmed | blend
 CROWD_MIN_QUORUM = 5  # base quorum; dynamic gates use 4–6 by time bucket
-CROWD_MIN_FAVORITE = 0.76  # legacy ceiling; dynamic floor typically 60–78% by bucket
+CROWD_MIN_FAVORITE = 0.76  # dashboard fallback only; trade gates use dynamic_gates
 CROWD_USE_ADAPTIVE_WEIGHTS = True
 CROWD_PERFORMANCE_PATH = str(Path(__file__).resolve().parent / "data" / "crowd_performance.json")
 

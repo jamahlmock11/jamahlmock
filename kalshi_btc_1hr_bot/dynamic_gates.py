@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from kalshi_btc_1hr_bot import config
 
@@ -29,14 +30,14 @@ class BucketPolicy:
     label: str
 
 
-# Loosen mid/late gates to capture more quality setups; tighten early/final slightly.
+# Loosen early hour to match mid/late — more quality trades across full window.
 DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
     HourBucket.HOUR_EARLY: BucketPolicy(
-        crowd_favorite=(0.70, 0.78),
-        min_edge_cents=(2.8, 3.5),
-        evidence_margin=(0.022, 0.030),
-        min_quorum=(5, 6),
-        min_agreement=(0.56, 0.62),
+        crowd_favorite=(0.64, 0.74),
+        min_edge_cents=(2.2, 2.8),
+        evidence_margin=(0.016, 0.022),
+        min_quorum=(4, 5),
+        min_agreement=(0.52, 0.58),
         label="45→60 min",
     ),
     HourBucket.HOUR_MID: BucketPolicy(
@@ -205,4 +206,65 @@ def resolve_dynamic_thresholds(
         evidence_margin_range=(ev_lo, ev_hi),
         quorum_range=(q_lo, q_hi),
         agreement_range=(ag_lo, ag_hi),
+    )
+
+
+def apply_dynamic_thresholds(
+    forecast: Any,
+    thresholds: DynamicThresholds,
+    trade_side: str,
+) -> Any:
+    """Align crowd confidence, quorum, and notes with dynamic gates for the trade side."""
+    from dataclasses import replace
+
+    from kalshi_btc_1hr_bot import config
+    from kalshi_btc_1hr_bot.crowd_forecast import CrowdForecast
+
+    crowd: CrowdForecast = forecast.crowd
+    side = trade_side.lower()
+    side_prob = crowd.side_prob(side)
+    side_quorum = sum(1 for m in crowd.members if m.side == side)
+    finish = "ABOVE" if side == "yes" else "BELOW"
+
+    total_w = sum(max(m.weight, 0.0) for m in crowd.members) or 1.0
+    confidence = sum(m.confidence * m.weight for m in crowd.members) / total_w
+    confidence *= crowd.agreement_score
+
+    if side_quorum < thresholds.min_quorum:
+        confidence *= side_quorum / max(thresholds.min_quorum, 1)
+    if side_prob < thresholds.min_crowd_favorite:
+        confidence *= side_prob / max(thresholds.min_crowd_favorite, 0.01)
+    if crowd.agreement_score < thresholds.min_agreement:
+        confidence *= crowd.agreement_score / max(thresholds.min_agreement, 0.01)
+    if not forecast.is_official_brti:
+        confidence *= config.PROXY_BRTI_CONFIDENCE_PENALTY
+
+    notes: list[str] = []
+    if side_quorum < thresholds.min_quorum:
+        notes.append(f"Crowd quorum {side_quorum}/{thresholds.min_quorum} on {side.upper()}")
+    if side_prob < thresholds.min_crowd_favorite:
+        notes.append(
+            f"Crowd {finish} {side_prob:.0%} < {thresholds.min_crowd_favorite:.0%} "
+            f"({thresholds.bucket_label})"
+        )
+    if crowd.agreement_score < thresholds.min_agreement:
+        notes.append(
+            f"Agreement {crowd.agreement_score:.0%} < {thresholds.min_agreement:.0%} "
+            f"({thresholds.bucket_label})"
+        )
+    if not forecast.is_official_brti:
+        notes.append("Proxy BRTI — crowd confidence reduced")
+
+    updated_crowd = replace(
+        crowd,
+        quorum_count=side_quorum,
+        quorum_required=thresholds.min_quorum,
+        quorum_met=side_quorum >= thresholds.min_quorum,
+        confidence=max(0.0, min(1.0, confidence)),
+        notes=tuple(notes),
+    )
+    return replace(
+        forecast,
+        crowd=updated_crowd,
+        confidence=max(0.0, min(1.0, confidence)),
     )
