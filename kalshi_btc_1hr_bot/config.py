@@ -69,7 +69,7 @@ MIN_EVIDENCE_MARGIN = 0.02
 EXIT_ENABLED = True
 TAKE_PROFIT_PCT = 0.50  # exit when bid >= entry + 50% of entry cost
 STOP_LOSS_PCT = 0.40  # exit when bid <= entry - 40% of entry cost
-EXIT_MIN_HOLD_SECONDS = 10.0
+EXIT_MIN_HOLD_SECONDS = 0.0
 
 
 @dataclass
