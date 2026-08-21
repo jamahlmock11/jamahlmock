@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from kalshi_btc_1hr_bot.config import load_config
 from kalshi_btc_1hr_bot.dashboard_state import STATE_PATH, load_snapshot
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient
+from kalshi_btc_1hr_bot.kalshi_pro import get_pro_hub
 from kalshi_btc_1hr_bot.trade_journal import TradeJournal
 
 logger = logging.getLogger(__name__)
@@ -93,10 +94,16 @@ def build_api_payload() -> dict[str, Any]:
     trades = [_trade_to_dict(t) for t in journal.list_trades(limit=200)]
     cycles = journal.list_cycles(limit=30)
     stats = journal.stats()
+    focus = snapshot.get("best_pick") or {}
+    pro_tools = get_pro_hub().get_payload(
+        focus_ticker=str(focus.get("ticker") or "") or None,
+        focus_side=str(focus.get("side") or "yes"),
+    )
     return {
         "snapshot": snapshot,
         "stats": stats,
         "trades": trades,
+        "pro_tools": pro_tools,
         "cycles": [
             {
                 "ts": c["ts"],
@@ -174,11 +181,13 @@ async def _push_loop() -> None:
 async def lifespan(app: FastAPI):
     global _settlement_thread
     _stop_event.clear()
+    get_pro_hub().start()
     _settlement_thread = threading.Thread(target=_settlement_loop, daemon=True)
     _settlement_thread.start()
     push_task = asyncio.create_task(_push_loop())
     yield
     _stop_event.set()
+    get_pro_hub().stop()
     push_task.cancel()
     try:
         await push_task

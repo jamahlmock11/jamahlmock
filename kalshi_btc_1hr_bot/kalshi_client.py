@@ -79,8 +79,9 @@ class KalshiClient:
             if not cursor:
                 break
 
-    def get_orderbook(self, ticker: str) -> dict:
-        return self._request("GET", f"/markets/{ticker}/orderbook")
+    def get_orderbook(self, ticker: str, *, depth: int = 0) -> dict:
+        params = {"depth": depth} if depth > 0 else None
+        return self._request("GET", f"/markets/{ticker}/orderbook", params=params)
 
     def place_order(
         self,

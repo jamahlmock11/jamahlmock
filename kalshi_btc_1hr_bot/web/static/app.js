@@ -525,12 +525,93 @@
     }).join("");
   }
 
+  function renderProTools(payload) {
+    const body = $("pro-tools-body");
+    const meta = $("pro-tools-meta");
+    const pro = payload.pro_tools || {};
+    const status = pro.status || {};
+    const focus = pro.focus;
+    if (!status.enabled) {
+      meta.textContent = "Pro stream disabled";
+      body.innerHTML = '<div class="pro-tools-empty">Set KALSHI_PRO_ENABLED=true and API keys to enable depth + flow.</div>';
+      return;
+    }
+    const mode = status.mode || "off";
+    const age = status.last_message_age_ms;
+    meta.textContent =
+      (status.connected ? "LIVE " + mode.toUpperCase() : mode.toUpperCase()) +
+      (age != null ? " · " + age + "ms" : "") +
+      (status.subscribed_tickers && status.subscribed_tickers.length
+        ? " · " + status.subscribed_tickers.length + " markets"
+        : "");
+    if (!focus) {
+      body.innerHTML = '<div class="pro-tools-empty">Waiting for focus market from bot scan…</div>';
+      return;
+    }
+    const book = focus.top_of_book || {};
+    const depth = focus.depth || {};
+    const flow = focus.order_flow || {};
+    const exec = focus.execution || {};
+    const side = (pro.focus_side || "yes").toUpperCase();
+    const bidKey = side === "YES" ? "yes_bid_cents" : "no_bid_cents";
+    const askKey = side === "YES" ? "yes_ask_cents" : "no_ask_cents";
+    const askDepthKey = side === "YES" ? "yes_ask_contracts" : "no_ask_contracts";
+    const ladder = side === "YES" ? focus.yes_asks || [] : focus.no_asks || [];
+    const maxSize = ladder.reduce(function (m, lv) { return Math.max(m, lv.size || 0); }, 1);
+    const depthRows = ladder.slice(0, 8).map(function (lv) {
+      const pct = Math.min(100, Math.round(((lv.size || 0) / maxSize) * 100));
+      return (
+        "<tr><td>" + lv.price_cents + "¢</td><td>" + lv.size + "</td><td>" +
+        '<div class="pro-depth-bar-wrap"><div class="pro-depth-bar" style="width:' + pct + '%"></div></div>' +
+        "</td></tr>"
+      );
+    }).join("");
+    const tape = (flow.recent || []).slice(0, 8).map(function (t) {
+      const cls = t.side === "YES" ? "yes" : "no";
+      return (
+        '<div class="pro-flow-row"><span class="' + cls + '">' + t.side +
+        " " + t.count + " @ " + t.price_cents + "¢</span><span>—</span></div>"
+      );
+    }).join("") || '<div class="pro-tools-empty">No recent prints yet</div>';
+    body.innerHTML =
+      '<div class="pro-tools-grid">' +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Depth Ladder · ' + side + " ASK</div>" +
+      '<table class="pro-depth-table"><thead><tr><th>Price</th><th>Size</th><th>Depth</th></tr></thead><tbody>' +
+      depthRows +
+      "</tbody></table>" +
+      '<div class="pro-kv" style="margin-top:0.45rem"><span class="k">OBI</span><span class="v">' +
+      (focus.obi != null ? focus.obi.toFixed(3) : "—") + "</span></div>" +
+      "</div>" +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Order Flow</div>' +
+      '<div class="pro-kv"><span class="k">YES volume</span><span class="v yes">' + (flow.yes_volume || 0) + "</span></div>" +
+      '<div class="pro-kv"><span class="k">NO volume</span><span class="v no">' + (flow.no_volume || 0) + "</span></div>" +
+      '<div class="pro-kv"><span class="k">Net flow</span><span class="v">' + (flow.net_side || "—").toUpperCase() + "</span></div>" +
+      tape +
+      "</div>" +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Execution Quality</div>' +
+      '<div class="pro-exec-score">' + (exec.score != null ? exec.score : "—") + "</div>" +
+      '<div class="pro-exec-note">' + (exec.note || "") + "</div>" +
+      '<div class="pro-kv" style="margin-top:0.55rem"><span class="k">Bid / Ask</span><span class="v">' +
+      (book[bidKey] != null ? book[bidKey] : "—") + " / " + (book[askKey] != null ? book[askKey] : "—") + "¢</span></div>" +
+      '<div class="pro-kv"><span class="k">Ask depth</span><span class="v">' + (depth[askDepthKey] || 0) + " contracts</span></div>" +
+      '<div class="pro-kv"><span class="k">VWAP (1 lot)</span><span class="v">' +
+      (exec.vwap_buy_yes_cents != null && side === "YES" ? exec.vwap_buy_yes_cents + "¢" :
+        exec.vwap_buy_no_cents != null && side === "NO" ? exec.vwap_buy_no_cents + "¢" : "—") + "</span></div>" +
+      '<div class="pro-kv"><span class="k">Slippage</span><span class="v">' +
+      (exec.slippage_buy_yes_cents != null ? exec.slippage_buy_yes_cents.toFixed(1) + "¢" : "0.0¢") + "</span></div>" +
+      "</div></div>";
+  }
+
   function render(payload) {
     const snap = payload.snapshot || {};
     const stats = payload.stats || {};
     renderStatusBanner(snap);
     renderCurrently(snap);
     renderOpenPositions(snap);
+    renderProTools(payload);
     renderTop4(snap);
     renderSnapshot(snap, stats);
     renderBest(snap);

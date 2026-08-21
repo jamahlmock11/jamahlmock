@@ -50,6 +50,8 @@ def test_manage_open_positions_triggers_take_profit(tmp_path):
     )
     bot = HourlyBot(cfg)
     bot.journal = journal
+    bot.risk.state.open_positions = 0
+    bot.risk.state.traded_tickers.clear()
     bot.risk.register_trade("KXBTCD-TP", 0.40)
     bot.client = MagicMock()
     bot.client._request.return_value = {
