@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--loop", action="store_true", help="Continuous scan loop")
     parser.add_argument("--interval", type=float, default=None, help="Scan interval seconds")
     parser.add_argument("--execute", action="store_true", help="Submit live orders when safety allows")
+    parser.add_argument("--reset", action="store_true", help="Reset risk/kill-switch state before starting")
     parser.add_argument("--web", action="store_true", help="Start web dashboard")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
@@ -40,6 +41,8 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     platform = ProductionPlatform(enable_15m=not args.no_15m, enable_1h=not args.no_1h)
+    if args.reset:
+        platform.reset_trading_state()
     interval = args.interval or platform.config.scan_interval_seconds
     try:
         if args.loop:
@@ -64,6 +67,8 @@ def _run_with_web(args: argparse.Namespace) -> None:
     from kalshi_bot.web.web_server import run_server
 
     platform = ProductionPlatform(enable_15m=not args.no_15m, enable_1h=not args.no_1h)
+    if args.reset:
+        platform.reset_trading_state()
     interval = args.interval or platform.config.scan_interval_seconds
     stop = threading.Event()
 

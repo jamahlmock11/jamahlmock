@@ -1,3 +1,65 @@
+function gatesBadge(opp) {
+  const g = opp?.gates;
+  if (!g) return "—";
+  if (g.ready_side === "YES") return `<span class="gates-badge ready-yes">YES</span>`;
+  if (g.ready_side === "NO") return `<span class="gates-badge ready-no">NO</span>`;
+  const passed = (g.gates || []).filter((x) => x.status === "pass").length;
+  const total = (g.gates || []).filter((x) => x.name !== "Position size").length;
+  return `<span class="gates-badge wait">${passed}/${total}</span>`;
+}
+
+function gateIcon(status) {
+  if (status === "pass") return "✓";
+  if (status === "warn") return "⚠";
+  return "✗";
+}
+
+function renderGateDashboard(opp) {
+  const listEl = document.getElementById("gate-list");
+  const labelEl = document.getElementById("gate-market-label");
+  const ctxEl = document.getElementById("gate-context");
+  const summaryEl = document.getElementById("gate-summary");
+
+  if (!opp || !opp.gates) {
+    labelEl.textContent = opp?.ticker || "No KXBTC15M market selected";
+    ctxEl.innerHTML = "";
+    listEl.innerHTML = `<div class="gate-empty">${opp ? "Gate data not available for this market." : "Select a 15m market row below."}</div>`;
+    summaryEl.textContent = "";
+    summaryEl.className = "gate-summary";
+    return;
+  }
+
+  const g = opp.gates;
+  labelEl.textContent = opp.ticker || "—";
+  ctxEl.innerHTML = `
+    <span>Model YES <strong>${Number(opp.model_yes || 0).toFixed(0)}%</strong></span>
+    <span>Crowd <strong>${g.crowd_direction} ${Number(g.crowd_yes_pct || 0).toFixed(0)}%</strong></span>
+    <span>Uncertainty <strong>${Number(g.uncertainty_pct || 0).toFixed(1)}%</strong></span>
+    <span>EV floor <strong>${Number(g.min_net_ev || 0).toFixed(3)}</strong></span>
+    <span>Bucket <strong>${g.time_bucket || "—"}</strong></span>`;
+
+  listEl.innerHTML = (g.gates || [])
+    .map(
+      (gate) => `
+    <div class="gate-item ${gate.status}">
+      <div class="gate-icon">${gateIcon(gate.status)}</div>
+      <div class="gate-body">
+        <div class="gate-name">${gate.name}</div>
+        <div class="gate-detail">${gate.detail}</div>
+      </div>
+    </div>`
+    )
+    .join("");
+
+  if (g.ready_side) {
+    summaryEl.textContent = `Ready to trade: BUY ${g.ready_side}`;
+    summaryEl.className = "gate-summary ready";
+  } else {
+    summaryEl.textContent = g.position_detail || "Waiting for a side to clear all gates.";
+    summaryEl.className = "gate-summary";
+  }
+}
+
 function fmtTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -165,12 +227,14 @@ ${opp.why_trade ? `<div class="why-box why-yes"><strong>WHY TRADE?</strong>\n${o
 ${opp.why_not_trade ? `<div class="why-box why-no"><strong>WHY NOT?</strong>\n${opp.why_not_trade}</div>` : ""}`;
 }
 
-function renderTable(tableId, opps, onSelect) {
+function renderTable(tableId, opps, onSelect, { showGates = false } = {}) {
   const tbody = document.querySelector(`#${tableId} tbody`);
   tbody.innerHTML = "";
   for (const o of opps || []) {
     const tr = document.createElement("tr");
     tr.className = signalClass(o.decision);
+    const gatesCol = showGates ? `<td>${gatesBadge(o)}</td>` : "";
+    const regimeCol = showGates ? "" : `<td>${o.regime || ""}</td>`;
     tr.innerHTML = `
       <td>${o.ticker || ""}</td>
       <td>${fmtTime(o.seconds_to_expiry || 0)}</td>
@@ -179,11 +243,12 @@ function renderTable(tableId, opps, onSelect) {
       <td>${Number(o.model_yes || 0).toFixed(0)}%</td>
       <td>${Math.round((o.yes_ask || 0) * 100)}</td>
       <td>${Math.round((o.no_ask || 0) * 100)}</td>
-      <td>${((o.yes_net_edge ?? o.net_edge || 0) * 100).toFixed(1)}</td>
+      <td>${((o.yes_net_edge ?? o.net_edge ?? 0) * 100).toFixed(1)}</td>
       <td>${((o.no_net_edge ?? 0) * 100).toFixed(1)}</td>
+      ${gatesCol}
       <td>${o.price_pattern || "—"}</td>
       <td>${o.confidence || ""}</td>
-      <td>${o.regime || ""}</td>
+      ${regimeCol}
       <td>${o.decision || ""}</td>`;
     tr.addEventListener("click", () => onSelect(o));
     tbody.appendChild(tr);
@@ -234,6 +299,14 @@ function renderSettlements(items) {
 
 let selectedOpp = null;
 
+function selectOpp(o) {
+  selectedOpp = o;
+  renderWhyPanel(o);
+  if (o?.strategy === "KXBTC15M" || (o?.ticker || "").includes("KXBTC15M")) {
+    renderGateDashboard(o);
+  }
+}
+
 function applyState(data) {
   const meta = document.getElementById("meta");
   if (!data || data.status === "no_data") {
@@ -251,6 +324,7 @@ function applyState(data) {
     renderCalibration([]);
     renderSettlements([]);
     renderFreshness(null);
+    renderGateDashboard(null);
     return;
   }
 
@@ -269,14 +343,13 @@ function applyState(data) {
   renderFreshness(data.freshness);
   renderBestCard("best-15m-detail", opps15[0], "KXBTC15M");
   renderBestCard("best-1h-detail", opps1h[0], "KXBTCD");
-  renderTable("opp-table-15m", opps15, (o) => {
-    selectedOpp = o;
-    renderWhyPanel(o);
-  });
-  renderTable("opp-table-1h", opps1h, (o) => {
-    selectedOpp = o;
-    renderWhyPanel(o);
-  });
+  renderTable("opp-table-15m", opps15, selectOpp, { showGates: true });
+  renderTable("opp-table-1h", opps1h, selectOpp);
+  const gateOpp =
+    selectedOpp && (selectedOpp.strategy === "KXBTC15M" || (selectedOpp.ticker || "").includes("KXBTC15M"))
+      ? selectedOpp
+      : opps15[0] || null;
+  renderGateDashboard(gateOpp);
   if (!selectedOpp) {
     renderWhyPanel(opps15[0] || opps1h[0] || null);
   }

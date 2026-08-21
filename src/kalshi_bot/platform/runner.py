@@ -112,6 +112,14 @@ class ProductionPlatform:
         )
         self.safety.candidate_model_version = platform_cfg.candidate_model_version
 
+        if live_mode:
+            logger.info("LIVE execution enabled (authenticated Kalshi API)")
+        elif self.config.execution.mode == "live" and not self.config.execution.dry_run:
+            logger.warning(
+                "Live execution configured but API not authenticated — "
+                "set KALSHI_API_KEY_ID, KALSHI_PRIVATE_KEY_PEM, and KALSHI_ENV=prod in .env"
+            )
+
         self.strategies: list[StrategyEngine] = []
         if enable_15m and platform_cfg.enable_kxbtc15m and self.config.v6.enabled:
             self.strategies.append(
@@ -130,6 +138,13 @@ class ProductionPlatform:
     def close(self) -> None:
         self.trade_tape.close()
         self.client.close()
+
+    def reset_trading_state(self) -> None:
+        """Reset kill switch, risk counters, and session P&L tracking."""
+        self.engine.risk.reset()
+        self.risk.reset()
+        self.safety.reset_session()
+        logger.info("trading state reset (kill switch, exposure, cooldowns, daily P&L)")
 
     def run_cycle(self, *, execute: bool = False) -> PlatformCycleResult:
         now = time.time()
@@ -219,6 +234,17 @@ class ProductionPlatform:
         for d in decisions:
             if d.signal not in ("BUY YES", "STRONG BUY YES", "BUY NO", "STRONG BUY NO"):
                 continue
+            if d.series == "KXBTC15M" and self.rules.require_gates_for_execution:
+                ready = d.features.get("gates_ready_side")
+                side = "YES" if "YES" in d.signal else "NO" if "NO" in d.signal else None
+                if not ready or side != ready:
+                    logger.info(
+                        "skip %s: gates not ready (signal=%s ready=%s)",
+                        d.ticker,
+                        d.signal,
+                        ready,
+                    )
+                    continue
             mis = _decision_to_mispricing(d)
             if mis is None:
                 continue
@@ -274,6 +300,8 @@ class ProductionPlatform:
                 "price_pattern": d.features.get("price_pattern"),
                 "yes_net_edge": d.features.get("yes_net_edge"),
                 "no_net_edge": d.features.get("no_net_edge"),
+                "gates": d.features.get("gates"),
+                "gates_ready_side": d.features.get("gates_ready_side"),
             }
 
         opps_15m = [_row(d) for d in result.decisions_15m]

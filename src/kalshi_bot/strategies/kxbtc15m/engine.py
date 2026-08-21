@@ -23,6 +23,7 @@ from kalshi_bot.strategy.mispricing_evaluator import evaluate_market_mispricing
 from kalshi_bot.strategy.mispricing_engine import TradeAction
 from kalshi_bot.strategy.price_patterns import PatternAssessment, detect_price_pattern
 from kalshi_bot.strategy.stale_price_detector import assess_stale_kalshi_price
+from kalshi_bot.strategy.trade_gates import evaluate_trade_gates
 from kalshi_bot.strategy.v6_upgrades import V6IntelligenceEngine
 
 
@@ -202,6 +203,23 @@ class Kxbtc15mStrategy(StrategyEngine):
             )
             self.engine.get_monitor().record(audit)
 
+            gates = evaluate_trade_gates(
+                model_prob_yes=audit.model_prob_up,
+                yes_net_ev=audit.yes_side.net_edge_dollars,
+                no_net_ev=audit.no_side.net_edge_dollars,
+                yes_ask=market.get("yes_ask"),
+                yes_bid=market.get("yes_bid"),
+                no_ask=market.get("no_ask"),
+                seconds_to_expiry=secs,
+                uncertainty_pct=audit.model_disagreement_pp,
+                contracts=audit.contracts,
+                min_seconds=self.v6.min_seconds_to_expiry,
+                max_seconds=self.v6.max_seconds_to_expiry,
+                bucket_overrides=self.rules.time_buckets or None,
+                gates_cfg=self.rules.gates,
+                arbitrary_cfg=self.rules.arbitrary,
+            )
+
             votes = []
             if self.config.platform.enable_settlement_model:
                 votes.append(ModelVote("settlement", audit.model_prob_up, 0.45, audit.model_confidence))
@@ -221,7 +239,12 @@ class Kxbtc15mStrategy(StrategyEngine):
             action = trade_dec.action.value
             net_edge = opp.best_net_edge
             signal = signal_from_action(action, net_edge=net_edge)
-            if ensemble.agreement_score < 0.55 and signal in (TradeSignal.BUY_YES, TradeSignal.BUY_NO):
+            min_agreement = self.rules.min_ensemble_agreement
+            if (
+                min_agreement is not None
+                and ensemble.agreement_score < min_agreement
+                and signal in (TradeSignal.BUY_YES, TradeSignal.BUY_NO)
+            ):
                 signal = TradeSignal.WAIT
                 trade_dec_reason = f"model disagreement (agreement={ensemble.agreement_score:.0%})"
             else:
@@ -278,6 +301,8 @@ class Kxbtc15mStrategy(StrategyEngine):
                         "yes_net_edge": audit.yes_side.net_edge_dollars,
                         "no_net_edge": audit.no_side.net_edge_dollars,
                         "executable_no": audit.no_side.executable_ask,
+                        "gates": gates.to_dict(),
+                        "gates_ready_side": gates.ready_side,
                     },
                     execute_verdict=audit.verdict if audit.verdict in ("TRADE_YES", "TRADE_NO") else None,
                     contracts=audit.contracts,

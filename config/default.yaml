@@ -1,11 +1,11 @@
 # Production platform — live data, execution gated by platform.trading_enabled
 platform:
-  trading_enabled: true
+  trading_enabled: false
   model_version: production-v1
   candidate_model_version: null
   daily_loss_limit_usd: 50.0
   enable_kxbtc15m: true
-  enable_kxbtcd: true
+  enable_kxbtcd: false
   max_data_age_seconds: 12.0
   enable_settlement_ingestion: false
   enable_settlement_model: false
@@ -75,7 +75,7 @@ bot_action:
 v6:
   enabled: true
   series_ticker: KXBTC15M
-  live_trading_enabled: true
+  live_trading_enabled: false
   min_trades_per_bucket: 3
   monte_carlo_sims: 5000
   journal_path: data/v6_trade_journal.db
@@ -104,11 +104,11 @@ smile:
   dividend_yield: 0.0
 
 execution:
-  mode: live
+  mode: paper
   time_in_force: immediate_or_cancel
   use_taker: true
   price_improve_ticks: 0
-  dry_run: false
+  dry_run: true
 
 # Pre-expiry exits: cut losers and bail when model edge flips against the position
 exit:

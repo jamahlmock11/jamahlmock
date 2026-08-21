@@ -10,7 +10,7 @@
   <header>
     <div>
       <h1>Kalshi Production Platform</h1>
-      <p class="subtitle">KXBTC15M mispricing · KXBTCD 1-hour forecast</p>
+      <p class="subtitle">KXBTC15M mispricing (15-minute)</p>
     </div>
     <div class="header-right">
       <div id="live-banner" class="live-banner disabled">DISABLED</div>
@@ -18,6 +18,18 @@
       <div id="meta" class="meta">Connecting…</div>
     </div>
   </header>
+
+  <section class="card gate-dashboard-card">
+    <div class="gate-header">
+      <h2>Trade Gates — KXBTC15M</h2>
+      <div id="gate-market-label" class="gate-market-label">Select a market below</div>
+    </div>
+    <div id="gate-context" class="gate-context"></div>
+    <div id="gate-list" class="gate-list">
+      <div class="gate-empty">Waiting for scan data…</div>
+    </div>
+    <div id="gate-summary" class="gate-summary"></div>
+  </section>
 
   <section class="grid safety-grid">
     <div class="card" id="safety-card">
@@ -48,7 +60,7 @@
         <tr>
           <th>Ticker</th><th>T-rem</th><th>Strike</th><th>BTC</th>
           <th>Model YES</th><th>YES¢</th><th>NO¢</th><th>YES edge¢</th><th>NO edge¢</th>
-          <th>Pattern</th><th>Conf</th><th>Regime</th><th>Signal</th>
+          <th>Gates</th><th>Pattern</th><th>Conf</th><th>Signal</th>
         </tr>
       </thead>
       <tbody></tbody>

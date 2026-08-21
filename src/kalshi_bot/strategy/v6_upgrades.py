@@ -547,6 +547,10 @@ class RiskControllerV6:
         if self.state.consecutive_losses >= self.config.max_consecutive_losses:
             self.state.kill_switch = True
 
+    def reset(self) -> None:
+        """Clear kill switch, daily P&L, cooldown, and exposure counters."""
+        self.state = RiskStateV6()
+
     def allow_trade(self, confidence: float) -> tuple[bool, str]:
         if self.state.kill_switch:
             return False, "kill_switch_active"
