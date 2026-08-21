@@ -1,5 +1,5 @@
-# KXBTC15M mispricing bot — finds calibrated settlement prob vs executable Kalshi price.
-# NOT up/down prediction: every trade requires net edge after fees, spread, slippage, risk.
+# KXBTC15M ONLY — 15-minute mispricing rules.
+# forecast_gates, bot_action, and arbitrary in config/default.yaml apply to KXBTCD hourly only.
 
 enabled: true
 mode: mispricing
@@ -21,6 +21,10 @@ strict_edge:
 
 bot_action: {}
 
+# 15m execution — single decision path via filter_trade (no stacked ensemble veto by default)
+min_ensemble_agreement: null
+require_gates_for_execution: false
+
 quality:
   max_spread: 0.08
   min_liquidity_score: 0.15
@@ -29,15 +33,15 @@ quality:
   min_pattern_examples: null
   stale_data_stop_trading: true
 
-# Per-side gate checklist (dashboard + trade readiness)
+# Dashboard gate checklist (display-only unless require_gates_for_execution: true)
 gates:
-  min_minutes_to_expiry: 0.5
-  max_minutes_to_expiry: 12.0
+  min_minutes_to_expiry: 1.0
+  max_minutes_to_expiry: 14.0
   uncertainty_cap: 0.10
   yes_alignment_min_forecast: 0.50
   no_alignment_min_crowd_pct: 0.52
 
-# Time-bucket edge floors (aligned with code defaults — was ~3–4¢ higher)
+# Time-bucket edge floors (aligned with code defaults)
 time_buckets:
   "15_10":
     min_net_edge_dollars: 0.14

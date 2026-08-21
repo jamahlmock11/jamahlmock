@@ -234,6 +234,17 @@ class ProductionPlatform:
         for d in decisions:
             if d.signal not in ("BUY YES", "STRONG BUY YES", "BUY NO", "STRONG BUY NO"):
                 continue
+            if d.series == "KXBTC15M" and self.rules.require_gates_for_execution:
+                ready = d.features.get("gates_ready_side")
+                side = "YES" if "YES" in d.signal else "NO" if "NO" in d.signal else None
+                if not ready or side != ready:
+                    logger.info(
+                        "skip %s: gates not ready (signal=%s ready=%s)",
+                        d.ticker,
+                        d.signal,
+                        ready,
+                    )
+                    continue
             mis = _decision_to_mispricing(d)
             if mis is None:
                 continue

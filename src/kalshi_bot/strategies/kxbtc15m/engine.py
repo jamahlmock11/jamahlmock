@@ -239,7 +239,12 @@ class Kxbtc15mStrategy(StrategyEngine):
             action = trade_dec.action.value
             net_edge = opp.best_net_edge
             signal = signal_from_action(action, net_edge=net_edge)
-            if ensemble.agreement_score < 0.55 and signal in (TradeSignal.BUY_YES, TradeSignal.BUY_NO):
+            min_agreement = self.rules.min_ensemble_agreement
+            if (
+                min_agreement is not None
+                and ensemble.agreement_score < min_agreement
+                and signal in (TradeSignal.BUY_YES, TradeSignal.BUY_NO)
+            ):
                 signal = TradeSignal.WAIT
                 trade_dec_reason = f"model disagreement (agreement={ensemble.agreement_score:.0%})"
             else:

@@ -162,8 +162,8 @@ class QualityRules15m(BaseModel):
 class TradeGatesConfig(BaseModel):
     """Dashboard gate thresholds for per-side trade readiness."""
 
-    min_minutes_to_expiry: float = 0.5
-    max_minutes_to_expiry: float = 12.0
+    min_minutes_to_expiry: float = 1.0
+    max_minutes_to_expiry: float = 14.0
     uncertainty_cap: float = 0.10
     yes_alignment_min_forecast: float = 0.50
     no_alignment_min_crowd_pct: float = 0.52
@@ -221,6 +221,16 @@ class Rules15mConfig(BaseModel):
     quality: QualityRules15m = Field(default_factory=QualityRules15m)
     gates: TradeGatesConfig = Field(default_factory=TradeGatesConfig)
     time_buckets: dict[str, dict] = Field(default_factory=dict)
+    # 15m execution tuning (does not affect KXBTCD hourly strategy).
+    min_ensemble_agreement: float | None = Field(
+        default=None,
+        description="If set, downgrade BUY signals below this agreement score. "
+        "None = off (filter_trade is the only gate).",
+    )
+    require_gates_for_execution: bool = Field(
+        default=False,
+        description="If true, live orders require dashboard gates.ready_side to match.",
+    )
 
 
 class ExecutionConfig(BaseModel):

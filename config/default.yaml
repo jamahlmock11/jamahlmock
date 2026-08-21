@@ -5,7 +5,7 @@ platform:
   candidate_model_version: null
   daily_loss_limit_usd: 50.0
   enable_kxbtc15m: true
-  enable_kxbtcd: true
+  enable_kxbtcd: false
   max_data_age_seconds: 12.0
   enable_settlement_ingestion: false
   enable_settlement_model: false
