@@ -75,6 +75,7 @@ def evaluate_edge_with_evidence(
     direction: DirectionalEvidence,
     *,
     fee_cents: float = config.FEE_PER_CONTRACT_CENTS,
+    subtract_fees: bool | None = None,
     min_edge: float | None = None,
     min_evidence_margin: float | None = None,
     min_agreement: float | None = None,
@@ -145,13 +146,14 @@ def evaluate_edge_with_evidence(
             f"(above={direction.above_score:.3f} below={direction.below_score:.3f})",
         )
 
+    gate_fee = config.gate_fee_cents(fee_cents, subtract=subtract_fees)
     if direction.side == "yes":
         ev_dollars = p_fair - yes_ask
-        edge_cents = ev_dollars * 100 - fee_cents
+        edge_cents = ev_dollars * 100 - gate_fee
         price = yes_ask
     else:
         ev_dollars = (1.0 - p_fair) - no_ask
-        edge_cents = ev_dollars * 100 - fee_cents
+        edge_cents = ev_dollars * 100 - gate_fee
         price = no_ask
 
     if edge_cents < edge_floor:

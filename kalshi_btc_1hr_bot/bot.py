@@ -9,7 +9,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from kalshi_btc_1hr_bot.config import BotConfig, load_config, require_live_credentials
+from kalshi_btc_1hr_bot import config
+from kalshi_btc_1hr_bot.config import BotConfig, gate_fee_cents, load_config, require_live_credentials
 from kalshi_btc_1hr_bot.dashboard_state import build_snapshot, save_snapshot
 from kalshi_btc_1hr_bot.data_feed import DataFeed
 from kalshi_btc_1hr_bot.dynamic_gates import apply_dynamic_thresholds, resolve_dynamic_thresholds
@@ -54,6 +55,17 @@ class HourlyBot:
             logger.debug("balance fetch failed", exc_info=True)
         return None
 
+    def _sync_live_sizing(self) -> None:
+        """Pull bankroll and trade cap from live Kalshi balance when configured."""
+        if not self.config.sizing.use_live_balance or self.config.paper:
+            return
+        balance = self._balance_usd()
+        if balance is None or balance <= 0:
+            return
+        self.config.sizing.bankroll_usd = balance
+        if self.config.sizing.max_trade_usd <= 0:
+            self.config.sizing.max_trade_usd = balance * self.config.sizing.max_bankroll_pct
+
     def close(self) -> None:
         self.client.close()
         self.feed.close()
@@ -61,6 +73,7 @@ class HourlyBot:
 
     def run_cycle(self) -> list[dict]:
         """Scan KXBTCD markets, rank top 4 by edge, trade the strongest evidence pick."""
+        self._sync_live_sizing()
         now = datetime.now(timezone.utc)
         data = self.feed.refresh()
         candidates: list[MarketCandidate] = []
@@ -114,6 +127,10 @@ class HourlyBot:
                     crowd_side_prob=side_prob,
                 )
                 aligned = apply_dynamic_thresholds(forecast, thresholds, direction.side)
+                edge_fee = gate_fee_cents(
+                    self.config.edge.fee_per_contract_cents,
+                    subtract=self.config.edge.subtract_fees_from_edge,
+                )
                 edge = evaluate_edge_with_evidence(
                     aligned.p_fair,
                     yes_ask_f,
@@ -121,12 +138,14 @@ class HourlyBot:
                     yes_bid_f,
                     no_bid_f,
                     direction,
-                    fee_cents=self.config.edge.fee_per_contract_cents,
+                    fee_cents=edge_fee,
+                    subtract_fees=self.config.edge.subtract_fees_from_edge,
                     thresholds=thresholds,
                     forecast=aligned,
                 )
-                # Edge-aware re-tune: strong edge can unlock slightly lower complementary gates
-                if edge.edge_cents >= 1.25 and not edge.should_trade:
+                # Edge-aware re-tune: strong gross edge can unlock slightly lower complementary gates
+                edge_pass_threshold = config.GATE_ABS_MIN_EDGE_CENTS
+                if edge.edge_cents >= edge_pass_threshold and not edge.should_trade:
                     thresholds = resolve_dynamic_thresholds(
                         secs,
                         vol_regime=forecast.vol_regime,
@@ -142,7 +161,8 @@ class HourlyBot:
                         yes_bid_f,
                         no_bid_f,
                         direction,
-                        fee_cents=self.config.edge.fee_per_contract_cents,
+                        fee_cents=edge_fee,
+                        subtract_fees=self.config.edge.subtract_fees_from_edge,
                         thresholds=thresholds,
                         forecast=aligned,
                     )
@@ -518,7 +538,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="KXBTCD 1-hour forecasting bot")
     parser.add_argument("--paper", action="store_true", default=True, help="Paper trading mode")
     parser.add_argument("--live", action="store_true", help="Live trading (requires API keys)")
-    parser.add_argument("--max-trade-usd", type=float, default=None, help="Hard cap per trade (default $1)")
+    parser.add_argument("--max-trade-usd", type=float, default=None, help="Hard cap per trade (0 = use live balance)")
     parser.add_argument("--once", action="store_true", help="Run a single cycle")
     parser.add_argument("--cycles", type=int, default=None, help="Run N cycles then exit")
     parser.add_argument("--test-notify", action="store_true", help="Send a test SMS and exit")
@@ -541,7 +561,8 @@ def main(argv: list[str] | None = None) -> None:
         cfg.kalshi_env = os.getenv("KALSHI_ENV", "prod")
     if args.max_trade_usd is not None:
         cfg.sizing.max_trade_usd = args.max_trade_usd
-        cfg.sizing.bankroll_usd = args.max_trade_usd
+        if not cfg.sizing.use_live_balance:
+            cfg.sizing.bankroll_usd = args.max_trade_usd
 
     logger.info(
         "mode=%s env=%s max_trade=$%.2f bankroll=$%.2f",

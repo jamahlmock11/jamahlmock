@@ -101,11 +101,11 @@ def test_quality_guardrails_compensate_relaxed_crowd():
     from kalshi_btc_1hr_bot.dynamic_gates import _apply_quality_guardrails
 
     cf_lo, cf_hi = 0.58, 0.66
-    edge_lo, edge_hi = 1.25, 1.7
+    edge_lo, edge_hi = 0.5, 1.0
     base_ev = 0.012
     crowd, edge, ev, ag = _apply_quality_guardrails(
         min_crowd=0.59,
-        min_edge=1.25,
+        min_edge=0.5,
         min_evidence=base_ev,
         min_agreement=0.48,
         cf_lo=cf_lo,

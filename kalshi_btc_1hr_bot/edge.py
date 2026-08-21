@@ -32,13 +32,16 @@ def evaluate_edge(
     no_bid: float,
     fee_cents: float = config.FEE_PER_CONTRACT_CENTS,
     min_edge: float = config.MIN_EDGE_CENTS,
+    *,
+    subtract_fees: bool | None = None,
 ) -> TradeSignal:
+    gate_fee = config.gate_fee_cents(fee_cents, subtract=subtract_fees)
     ev_yes_dollars = p_fair * 1.0 - yes_ask
-    edge_yes_cents = ev_yes_dollars * 100 - fee_cents
+    edge_yes_cents = ev_yes_dollars * 100 - gate_fee
 
     p_no_fair = 1.0 - p_fair
     ev_no_dollars = p_no_fair * 1.0 - no_ask
-    edge_no_cents = ev_no_dollars * 100 - fee_cents
+    edge_no_cents = ev_no_dollars * 100 - gate_fee
 
     if edge_yes_cents >= edge_no_cents:
         best_side, best_edge, best_price, best_ev = "yes", edge_yes_cents, yes_ask, ev_yes_dollars

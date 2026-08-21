@@ -150,6 +150,12 @@ def build_checklist(
     edge_rng = th.min_edge_range
     ag_rng = th.agreement_range
 
+    edge_label = "Edge" if not cfg.edge.subtract_fees_from_edge else "Net edge"
+    edge_detail = (
+        f"{best.edge.edge_cents:.1f}¢ gross (fees ignored for gates)"
+        if not cfg.edge.subtract_fees_from_edge
+        else f"{best.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee"
+    )
     items.extend(
         [
             CheckItem(
@@ -159,9 +165,9 @@ def build_checklist(
                 "evidence",
             ),
             CheckItem(
-                f"Net edge ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
+                f"{edge_label} ≥ {th.min_edge_cents:.1f}¢ ({edge_rng[0]:.1f}–{edge_rng[1]:.1f}¢)",
                 best.edge.should_trade or best.edge.edge_cents >= th.min_edge_cents,
-                f"{best.edge.edge_cents:.1f}¢ after {cfg.edge.fee_per_contract_cents:.2f}¢ fee",
+                edge_detail,
                 "edge",
             ),
             CheckItem(
@@ -388,7 +394,8 @@ def build_snapshot(
         thresholds={
             "min_edge_cents": focus_th.min_edge_cents if focus_th else cfg.edge.min_edge_cents,
             "min_edge_range": list(focus_th.min_edge_range) if focus_th else None,
-            "fee_cents": cfg.edge.fee_per_contract_cents,
+            "fee_cents": 0.0 if not cfg.edge.subtract_fees_from_edge else cfg.edge.fee_per_contract_cents,
+            "subtract_fees_from_edge": cfg.edge.subtract_fees_from_edge,
             "min_evidence_margin": focus_th.min_evidence_margin if focus_th else config.MIN_EVIDENCE_MARGIN,
             "evidence_margin_range": list(focus_th.evidence_margin_range) if focus_th else None,
             "min_agreement": focus_th.min_agreement if focus_th else config.ENSEMBLE_MIN_AGREEMENT,

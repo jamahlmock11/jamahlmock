@@ -8,12 +8,13 @@ from pathlib import Path
 
 # Edge thresholds — static fallbacks; bot uses dynamic_gates.resolve_dynamic_thresholds()
 MIN_EDGE_CENTS = 2.5
-FEE_PER_CONTRACT_CENTS = 1.75
+FEE_PER_CONTRACT_CENTS = 1.75  # accounting only; gates ignore fees when SUBTRACT_FEES_FROM_EDGE=false
+SUBTRACT_FEES_FROM_EDGE = False
 DYNAMIC_GATES_ENABLED = True
 RISK_MIN_SECONDS = 120.0
 # Hard quality floors — gates may loosen inside buckets but never below these
 GATE_ABS_MIN_CROWD = 0.60
-GATE_ABS_MIN_EDGE_CENTS = 1.25
+GATE_ABS_MIN_EDGE_CENTS = 0.5  # gross edge (pre-fee) when fees excluded from gates
 GATE_ABS_MIN_EVIDENCE = 0.012
 GATE_ABS_MIN_AGREEMENT = 0.48
 
@@ -84,6 +85,7 @@ class ModelConfig:
 class EdgeConfig:
     min_edge_cents: float = MIN_EDGE_CENTS
     fee_per_contract_cents: float = FEE_PER_CONTRACT_CENTS
+    subtract_fees_from_edge: bool = SUBTRACT_FEES_FROM_EDGE
 
 
 @dataclass
@@ -92,6 +94,7 @@ class SizingConfig:
     max_bankroll_pct: float = 1.0
     max_trade_usd: float = 1.0
     bankroll_usd: float = 1.0
+    use_live_balance: bool = True
 
 
 @dataclass
@@ -158,6 +161,15 @@ class BotConfig:
 ROOT = Path(__file__).resolve().parent
 
 
+def gate_fee_cents(fee_cents: float | None = None, *, subtract: bool | None = None) -> float:
+    """Fee applied to edge gates — zero when user opts out of fee-adjusted edge."""
+    if subtract is None:
+        subtract = SUBTRACT_FEES_FROM_EDGE
+    if not subtract:
+        return 0.0
+    return fee_cents if fee_cents is not None else FEE_PER_CONTRACT_CENTS
+
+
 def load_config() -> BotConfig:
     try:
         from dotenv import load_dotenv
@@ -168,8 +180,17 @@ def load_config() -> BotConfig:
         pass
 
     cfg = BotConfig()
+    cfg.edge.subtract_fees_from_edge = os.getenv(
+        "SUBTRACT_FEES_FROM_EDGE", "false" if not SUBTRACT_FEES_FROM_EDGE else "true"
+    ).lower() in ("true", "1", "yes")
+    cfg.sizing.use_live_balance = os.getenv("USE_LIVE_BALANCE", "true").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
     cfg.sizing.bankroll_usd = float(os.getenv("BANKROLL_USD", "1"))
-    cfg.sizing.max_trade_usd = float(os.getenv("MAX_TRADE_USD", "1"))
+    max_trade_env = os.getenv("MAX_TRADE_USD", "0")
+    cfg.sizing.max_trade_usd = float(max_trade_env) if max_trade_env else 0.0
     cfg.sizing.max_bankroll_pct = float(os.getenv("MAX_BANKROLL_PCT", "1.0"))
     cfg.paper = os.getenv("PAPER_MODE", "true").lower() not in ("false", "0", "no")
     cfg.kalshi_env = os.getenv("KALSHI_ENV", cfg.kalshi_env)
@@ -182,7 +203,7 @@ def load_config() -> BotConfig:
         except OSError:
             pass
     cfg.kalshi_private_key_pem = pem
-    if cfg.sizing.max_trade_usd <= 1.0:
+    if cfg.sizing.max_trade_usd > 0 and cfg.sizing.max_trade_usd <= 1.0:
         cfg.risk.max_open_positions = 1
 
     cfg.notify = NotifyConfig(

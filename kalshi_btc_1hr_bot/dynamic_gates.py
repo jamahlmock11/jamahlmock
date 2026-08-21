@@ -34,7 +34,7 @@ class BucketPolicy:
 DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
     HourBucket.HOUR_EARLY: BucketPolicy(
         crowd_favorite=(0.64, 0.74),
-        min_edge_cents=(2.2, 2.8),
+        min_edge_cents=(0.8, 1.5),
         evidence_margin=(0.016, 0.022),
         min_quorum=(4, 5),
         min_agreement=(0.52, 0.58),
@@ -42,7 +42,7 @@ DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
     ),
     HourBucket.HOUR_MID: BucketPolicy(
         crowd_favorite=(0.65, 0.76),
-        min_edge_cents=(2.2, 3.0),
+        min_edge_cents=(0.8, 1.5),
         evidence_margin=(0.016, 0.024),
         min_quorum=(4, 6),
         min_agreement=(0.52, 0.58),
@@ -50,7 +50,7 @@ DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
     ),
     HourBucket.HOUR_LATE: BucketPolicy(
         crowd_favorite=(0.60, 0.70),
-        min_edge_cents=(1.5, 2.2),
+        min_edge_cents=(0.5, 1.2),
         evidence_margin=(0.013, 0.020),
         min_quorum=(4, 5),
         min_agreement=(0.50, 0.56),
@@ -58,7 +58,7 @@ DEFAULT_BUCKET_POLICIES: dict[HourBucket, BucketPolicy] = {
     ),
     HourBucket.HOUR_FINAL: BucketPolicy(
         crowd_favorite=(0.58, 0.66),
-        min_edge_cents=(1.25, 1.7),
+        min_edge_cents=(0.5, 1.0),
         evidence_margin=(0.012, 0.017),
         min_quorum=(4, 5),
         min_agreement=(0.48, 0.54),
