@@ -33,6 +33,9 @@ live-once:
 live-loop:
 	$(PYTHON) bot.py --live --max-trade-usd 1
 
+test-notify:
+	$(PYTHON) bot.py --test-notify
+
 dashboard:
 	DASHBOARD_PORT=$(DASHBOARD_PORT) $(PYTHON) dashboard.py
 

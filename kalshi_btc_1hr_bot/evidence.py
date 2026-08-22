@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from kalshi_btc_1hr_bot import config
+from kalshi_btc_1hr_bot.dynamic_gates import DynamicThresholds
 from kalshi_btc_1hr_bot.edge import TradeSignal, evaluate_edge
 from kalshi_btc_1hr_bot.ensemble import ModelVote
-from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput
+from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput, agreement_score_for_gates
 
 
 @dataclass(frozen=True)
@@ -74,14 +75,42 @@ def evaluate_edge_with_evidence(
     direction: DirectionalEvidence,
     *,
     fee_cents: float = config.FEE_PER_CONTRACT_CENTS,
-    min_edge: float = config.MIN_EDGE_CENTS,
+    subtract_fees: bool | None = None,
+    min_edge: float | None = None,
     min_evidence_margin: float | None = None,
+    min_agreement: float | None = None,
+    min_quorum: int | None = None,
+    min_crowd_favorite: float | None = None,
+    crowd_gates_enabled: bool | None = None,
+    use_ensemble_agreement: bool | None = None,
+    thresholds: DynamicThresholds | None = None,
     forecast: ForecastEnsembleOutput | None = None,
 ) -> TradeSignal:
     """Evaluate edge only on the evidence-backed side (above/below strike)."""
-    min_margin = min_evidence_margin if min_evidence_margin is not None else config.MIN_EVIDENCE_MARGIN
+    crowd_on = config.CROWD_GATES_ENABLED if crowd_gates_enabled is None else crowd_gates_enabled
+    use_ensemble = (
+        config.USE_ENSEMBLE_AGREEMENT if use_ensemble_agreement is None else use_ensemble_agreement
+    )
+    if thresholds is not None:
+        min_margin = min_evidence_margin if min_evidence_margin is not None else thresholds.min_evidence_margin
+        edge_floor = min_edge if min_edge is not None else thresholds.min_edge_cents
+        agree_floor = min_agreement if min_agreement is not None else thresholds.min_agreement
+        quorum_floor = min_quorum if min_quorum is not None else thresholds.min_quorum
+        crowd_floor = min_crowd_favorite if min_crowd_favorite is not None else thresholds.min_crowd_favorite
+    else:
+        min_margin = min_evidence_margin if min_evidence_margin is not None else config.MIN_EVIDENCE_MARGIN
+        edge_floor = min_edge if min_edge is not None else config.MIN_EDGE_CENTS
+        agree_floor = min_agreement if min_agreement is not None else config.ENSEMBLE_MIN_AGREEMENT
+        quorum_floor = min_quorum if min_quorum is not None else config.CROWD_MIN_QUORUM
+        crowd_floor = min_crowd_favorite if min_crowd_favorite is not None else config.CROWD_MIN_FAVORITE
 
-    if forecast is not None and not forecast.quorum_met:
+    agree_score = (
+        agreement_score_for_gates(forecast, use_ensemble=use_ensemble)
+        if forecast is not None
+        else 0.0
+    )
+
+    if crowd_on and forecast is not None and forecast.crowd.quorum_count < quorum_floor:
         crowd = forecast.crowd
         return TradeSignal(
             False,
@@ -90,7 +119,31 @@ def evaluate_edge_with_evidence(
             yes_ask if direction.side == "yes" else no_ask,
             0.0,
             0.0,
-            f"Crowd quorum {crowd.quorum_count}/{crowd.quorum_required} on {crowd.consensus_side.upper()}",
+            f"Crowd quorum {crowd.quorum_count}/{quorum_floor} on {crowd.consensus_side.upper()}",
+        )
+
+    if forecast is not None and agree_score < agree_floor:
+        return TradeSignal(
+            False,
+            direction.side,
+            p_fair,
+            yes_ask if direction.side == "yes" else no_ask,
+            0.0,
+            0.0,
+            f"Ensemble agreement {agree_score:.0%} < min {agree_floor:.0%}",
+        )
+
+    if crowd_on and forecast is not None and not forecast.crowd.side_met(direction.side, min_favorite=crowd_floor):
+        crowd = forecast.crowd
+        finish = "ABOVE" if direction.side == "yes" else "BELOW"
+        return TradeSignal(
+            False,
+            direction.side,
+            p_fair,
+            yes_ask if direction.side == "yes" else no_ask,
+            0.0,
+            0.0,
+            f"Crowd {finish} {crowd.side_pct(direction.side):.1f}% < {crowd_floor * 100:.0f}%",
         )
 
     if direction.margin < min_margin:
@@ -105,16 +158,17 @@ def evaluate_edge_with_evidence(
             f"(above={direction.above_score:.3f} below={direction.below_score:.3f})",
         )
 
+    gate_fee = config.gate_fee_cents(fee_cents, subtract=subtract_fees)
     if direction.side == "yes":
         ev_dollars = p_fair - yes_ask
-        edge_cents = ev_dollars * 100 - fee_cents
+        edge_cents = ev_dollars * 100 - gate_fee
         price = yes_ask
     else:
         ev_dollars = (1.0 - p_fair) - no_ask
-        edge_cents = ev_dollars * 100 - fee_cents
+        edge_cents = ev_dollars * 100 - gate_fee
         price = no_ask
 
-    if edge_cents < min_edge:
+    if edge_cents < edge_floor:
         return TradeSignal(
             False,
             direction.side,
@@ -122,7 +176,7 @@ def evaluate_edge_with_evidence(
             price,
             edge_cents,
             ev_dollars,
-            f"Edge {edge_cents:.1f}c < min {min_edge:.1f}c on {direction.finish_label}",
+            f"Edge {edge_cents:.1f}c < min {edge_floor:.1f}c on {direction.finish_label}",
         )
 
     return TradeSignal(
@@ -147,6 +201,11 @@ class MarketCandidate:
     edge: TradeSignal
     evidence_score: float
     market: dict
+    thresholds: DynamicThresholds | None = None
+    trend_aligned: bool = False
+    flow_aligned: bool = False
+    trend_detail: str = ""
+    flow_detail: str = ""
 
 
 def evidence_score(direction: DirectionalEvidence, forecast: ForecastEnsembleOutput) -> float:
@@ -158,8 +217,10 @@ def evidence_score(direction: DirectionalEvidence, forecast: ForecastEnsembleOut
 def select_best_from_top_markets(
     candidates: list[MarketCandidate],
     n: int | None = None,
+    *,
+    trend_bias: bool | None = None,
 ) -> MarketCandidate | None:
-    """Take top-N markets by edge, return the one with strongest directional evidence."""
+    """Take top-N markets by edge; return best by trend/flow bias then evidence."""
     n = n or config.TOP_N_MARKETS
     if not candidates:
         return None
@@ -169,4 +230,15 @@ def select_best_from_top_markets(
         return None
 
     top = sorted(tradeable, key=lambda c: c.edge.edge_cents, reverse=True)[:n]
+    use_trend_bias = config.TREND_BIAS_SELECTION if trend_bias is None else trend_bias
+    if use_trend_bias:
+        return max(
+            top,
+            key=lambda c: (
+                int(c.trend_aligned),
+                int(c.flow_aligned),
+                c.evidence_score,
+                c.edge.edge_cents,
+            ),
+        )
     return max(top, key=lambda c: c.evidence_score)

@@ -52,8 +52,29 @@ class ForecastEnsembleOutput:
         return self.crowd.quorum_met
 
     @property
+    def favorite_met(self) -> bool:
+        return self.crowd.favorite_met
+
+    def favorite_met_for_side(self, side: str, *, min_favorite: float) -> bool:
+        return self.crowd.side_met(side, min_favorite=min_favorite)
+
+    @property
     def crowd_summary(self) -> dict:
         return crowd_summary(self.crowd)
+
+    def crowd_summary_at(self, min_favorite: float | None = None) -> dict:
+        return crowd_summary(self.crowd, min_favorite=min_favorite)
+
+
+def agreement_score_for_gates(
+    forecast: ForecastEnsembleOutput,
+    *,
+    use_ensemble: bool = True,
+) -> float:
+    """Agreement metric used for trade gates — ensemble or crowd voters."""
+    if use_ensemble:
+        return forecast.ensemble.agreement_score
+    return forecast.agreement_score
 
 
 class ForecastEnsemble:
@@ -71,18 +92,11 @@ class ForecastEnsemble:
         legacy_votes = self._build_legacy_votes(output, state)
         ensemble = combine_models(legacy_votes)
 
-        # Primary fair price from crowd synthesis
+        # Primary fair price from crowd synthesis (dynamic gate alignment happens in bot.py)
         p_fair = crowd.prob_yes
         confidence = crowd.confidence
         agreement_score = crowd.agreement_score
         uncertainty = crowd.uncertainty
-
-        if not crowd.quorum_met:
-            confidence *= 0.65
-        if not state.is_official_brti:
-            confidence *= config.PROXY_BRTI_CONFIDENCE_PENALTY
-        if crowd.agreement_score < config.ENSEMBLE_MIN_AGREEMENT:
-            confidence *= crowd.agreement_score
 
         return ForecastEnsembleOutput(
             p_fair=p_fair,

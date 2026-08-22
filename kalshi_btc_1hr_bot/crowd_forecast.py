@@ -68,6 +68,32 @@ class CrowdForecast:
     def finish_label(self) -> str:
         return "ABOVE" if self.consensus_side == "yes" else "BELOW"
 
+    @property
+    def favorite_prob(self) -> float:
+        """Crowd probability on the consensus side (either YES or NO)."""
+        return self.prob_yes if self.consensus_side == "yes" else self.prob_no
+
+    @property
+    def favorite_pct(self) -> float:
+        return self.favorite_prob * 100.0
+
+    @property
+    def favorite_met(self) -> bool:
+        return self.favorite_prob >= config.CROWD_MIN_FAVORITE
+
+    def favorite_met_at(self, min_favorite: float) -> bool:
+        return self.favorite_prob >= min_favorite
+
+    def side_prob(self, side: str) -> float:
+        return self.prob_yes if side == "yes" else self.prob_no
+
+    def side_pct(self, side: str) -> float:
+        return self.side_prob(side) * 100.0
+
+    def side_met(self, side: str, *, min_favorite: float | None = None) -> bool:
+        floor = config.CROWD_MIN_FAVORITE if min_favorite is None else min_favorite
+        return self.side_prob(side) >= floor
+
 
 class CrowdPerformanceTracker:
     """Track per-member Brier scores and adapt weights."""
@@ -276,19 +302,13 @@ class CrowdForecastSystem:
         uncertainty = min(1.0, spread * 1.2)
         confidence = sum(m.confidence * m.weight for m in members) / total_w
         confidence *= agreement
-        if not quorum_met:
-            confidence *= quorum_count / max(quorum_required, 1)
 
         disagreeing = tuple(m.name for m in members if m.side != consensus)
         top = _top_members(members, config.TOP_N_VOTES)
 
         notes: list[str] = []
-        if not quorum_met:
-            notes.append(f"Crowd quorum {quorum_count}/{quorum_required} on {consensus.upper()}")
-        if agreement < config.ENSEMBLE_MIN_AGREEMENT:
-            notes.append(f"Crowd disagreement ({agreement:.0%} agreement)")
         if not state.is_official_brti:
-            notes.append("Proxy BRTI — crowd confidence reduced")
+            notes.append("Proxy BRTI — unofficial feed")
 
         return CrowdForecast(
             prob_yes=prob_yes,
@@ -322,8 +342,9 @@ class CrowdForecastSystem:
             self.tracker.record(m.name, m.prob_yes, outcome_yes)
 
 
-def crowd_summary(crowd: CrowdForecast) -> dict[str, Any]:
+def crowd_summary(crowd: CrowdForecast, *, min_favorite: float | None = None) -> dict[str, Any]:
     """JSON-serializable crowd snapshot for dashboard."""
+    fav_floor = config.CROWD_MIN_FAVORITE if min_favorite is None else min_favorite
     return {
         "prob_yes": round(crowd.prob_yes, 4),
         "consensus": crowd.consensus_side.upper(),
@@ -332,6 +353,9 @@ def crowd_summary(crowd: CrowdForecast) -> dict[str, Any]:
         "agreement": round(crowd.agreement_score, 3),
         "quorum": f"{crowd.quorum_count}/{crowd.quorum_required}",
         "quorum_met": crowd.quorum_met,
+        "favorite_pct": round(crowd.favorite_pct, 1),
+        "favorite_met": crowd.favorite_met_at(fav_floor),
+        "min_favorite_pct": round(fav_floor * 100, 1),
         "yes_votes": crowd.yes_votes,
         "no_votes": crowd.no_votes,
         "synthesis": crowd.synthesis,

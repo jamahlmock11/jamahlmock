@@ -62,7 +62,7 @@
     $("top4-updated").textContent = snap.updated_at ? "Updated " + snap.updated_at.slice(11, 19) + " UTC" : "—";
 
     if (!rows.length) {
-      grid.innerHTML = '<div class="top4-card empty">No markets in window — waiting for bot scan…</div>';
+      grid.innerHTML = '<div class="top4-card empty">No Kalshi card strikes in window — waiting for bot scan…</div>';
       return;
     }
 
@@ -94,6 +94,185 @@
     }).join("");
   }
 
+  function renderCurrently(snap) {
+    const body = $("currently-body");
+    const meta = $("currently-meta");
+    const ctx = snap.entry_context;
+
+    if (!ctx) {
+      meta.textContent = snap.updated_at ? "Updated " + snap.updated_at.slice(11, 19) + " UTC" : "—";
+      body.innerHTML = '<div class="currently-empty">No market in the hourly window yet.</div>';
+      return;
+    }
+
+    meta.textContent =
+      ctx.ticker + " · " + ctx.bucket_label + " · " + ctx.mins_left + "m left · " + (ctx.regime || "med") + " vol";
+
+    const book = ctx.kalshi_book || {};
+    const trade = ctx.trade_side || {};
+    const model = ctx.model || {};
+    const req = ctx.requirements || {};
+    const risk = ctx.risk || {};
+    const sideClass = ctx.finish === "ABOVE" ? "above" : "below";
+    const bindingClass = ctx.binding_gate ? "binding-fail" : "binding-ok";
+
+    let priceHint = "";
+    if (req.max_entry_price_cents != null && req.price_to_clear_cents != null && req.price_to_clear_cents > 0) {
+      priceHint =
+        "Kalshi " +
+        ctx.side.toUpperCase() +
+        " ask must drop " +
+        req.price_to_clear_cents.toFixed(1) +
+        "¢ to ≤ " +
+        req.max_entry_price_cents.toFixed(1) +
+        "¢ for min edge";
+    } else if (req.max_entry_price_cents != null && ctx.should_trade) {
+      priceHint = "Price clears min edge at current ask";
+    }
+
+    const gateRows = (ctx.gates || [])
+      .map(function (g) {
+        const rowClass = g.passed ? "gate-pass" : g.binding ? "gate-binding" : "gate-fail";
+        const delta = g.delta ? '<span class="gate-delta">' + g.delta + "</span>" : '<span class="gate-ok-mark">✓</span>';
+        return (
+          '<div class="gate-row ' +
+          rowClass +
+          '">' +
+          '<div class="gate-name">' +
+          g.label +
+          (g.binding ? ' <span class="gate-binding-tag">BLOCKING</span>' : "") +
+          "</div>" +
+          '<div class="gate-current">' +
+          g.current +
+          "</div>" +
+          '<div class="gate-required">' +
+          g.required +
+          "</div>" +
+          '<div class="gate-gap">' +
+          delta +
+          "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+
+    body.innerHTML =
+      '<div class="currently-grid">' +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Market &amp; Spot</div>' +
+      '<div class="currently-kv"><span class="k">Strike</span><span class="v">$' +
+      Number(ctx.strike).toLocaleString() +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">BRTI Spot</span><span class="v">$' +
+      Number(ctx.spot).toLocaleString(undefined, { maximumFractionDigits: 0 }) +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Distance</span><span class="v ' +
+      sideClass +
+      '">' +
+      ctx.spot_to_strike_label +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Trade direction</span><span class="v ' +
+      sideClass +
+      '">' +
+      ctx.finish +
+      " · " +
+      ctx.side.toUpperCase() +
+      "</span></div>" +
+      "</div>" +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Kalshi Order Book</div>' +
+      '<div class="book-grid">' +
+      '<div class="book-side"><div class="book-label">YES</div><div class="book-prices">' +
+      (book.yes_bid_cents != null ? book.yes_bid_cents : "—") +
+      " / " +
+      (book.yes_ask_cents != null ? book.yes_ask_cents : "—") +
+      '¢</div><div class="book-sub">bid / ask · spread ' +
+      (book.yes_spread_cents != null ? book.yes_spread_cents : "—") +
+      "¢</div></div>" +
+      '<div class="book-side"><div class="book-label">NO</div><div class="book-prices">' +
+      (book.no_bid_cents != null ? book.no_bid_cents : "—") +
+      " / " +
+      (book.no_ask_cents != null ? book.no_ask_cents : "—") +
+      '¢</div><div class="book-sub">bid / ask · spread ' +
+      (book.no_spread_cents != null ? book.no_spread_cents : "—") +
+      "¢</div></div>" +
+      "</div>" +
+      '<div class="currently-kv"><span class="k">Your side (' +
+      ctx.side.toUpperCase() +
+      ')</span><span class="v">' +
+      trade.bid_cents +
+      " / " +
+      trade.ask_cents +
+      '¢ bid/ask</span></div>' +
+      '<div class="currently-kv"><span class="k">Kalshi implied</span><span class="v">YES ' +
+      book.implied_yes_pct +
+      "¢ · NO " +
+      book.implied_no_pct +
+      "¢</span></div>" +
+      "</div>" +
+      '<div class="currently-card">' +
+      '<div class="currently-card-title">Model vs Kalshi</div>' +
+      '<div class="currently-kv"><span class="k">Model fair YES</span><span class="v">' +
+      model.fair_yes_pct +
+      "%</span></div>" +
+      '<div class="currently-kv"><span class="k">Model fair ' +
+      ctx.finish +
+      '</span><span class="v ' +
+      sideClass +
+      '">' +
+      model.fair_side_pct +
+      "%</span></div>" +
+      '<div class="currently-kv"><span class="k">Kalshi ' +
+      ctx.side.toUpperCase() +
+      " ask</span><span class=\"v\">" +
+      trade.ask_cents +
+      "¢</span></div>" +
+      '<div class="currently-kv"><span class="k">Fair − Ask gap</span><span class="v">' +
+      (model.edge_vs_kalshi_cents != null ? model.edge_vs_kalshi_cents.toFixed(1) + "pp" : "—") +
+      " · edge " +
+      fmtCents(model.edge_cents) +
+      "</span></div>" +
+      '<div class="currently-kv"><span class="k">Need for entry</span><span class="v">edge ≥ ' +
+      req.min_edge_cents +
+      "¢ · ensemble ≥ " +
+      (req.min_ensemble_agreement_pct != null ? req.min_ensemble_agreement_pct : req.min_agreement_pct) +
+      "%" +
+      (req.min_crowd_pct != null ? " · crowd ≥ " + req.min_crowd_pct + "%" : "") +
+      "</span></div>" +
+      (priceHint
+        ? '<div class="price-hint">' + priceHint + "</div>"
+        : "") +
+      "</div>" +
+      '<div class="currently-card currently-gates">' +
+      '<div class="currently-card-title">Distance to Entry</div>' +
+      '<div class="binding-banner ' +
+      bindingClass +
+      '">' +
+      (ctx.binding_gate
+        ? "<strong>Blocking:</strong> " + ctx.binding_gate + " — " + ctx.binding_detail
+        : "<strong>All gates pass</strong> — awaiting pick / execution") +
+      "</div>" +
+      '<div class="gate-table-head"><span>Gate</span><span>Now</span><span>Need</span><span>Gap</span></div>' +
+      gateRows +
+      '<div class="risk-line">' +
+      "Risk: " +
+      (risk.allowed ? "ok" : risk.block_reason) +
+      " · positions " +
+      risk.open_positions +
+      "/" +
+      risk.max_open_positions +
+      (risk.cooldown_remaining_s != null && risk.cooldown_remaining_s > 0
+        ? " · cooldown " + Math.ceil(risk.cooldown_remaining_s) + "s"
+        : "") +
+      (risk.already_traded ? " · already traded this ticker" : "") +
+      " · size " +
+      (ctx.sizing && ctx.sizing.contracts != null ? ctx.sizing.contracts : 0) +
+      " contracts" +
+      "</div>" +
+      "</div>" +
+      "</div>";
+  }
+
   function renderSnapshot(snap, stats) {
     $("stat-spot").textContent = snap.spot ? "$" + Number(snap.spot).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—";
     $("stat-brti").textContent = (snap.brti_source || "—") + (snap.brti_official ? " · official" : " · proxy");
@@ -121,9 +300,18 @@
     cycleEl.className = "cycle-badge" + (cs === "TRADE" || cs === "READY" ? " trade" : cs === "CLOSE" ? " close" : "");
 
     const th = snap.thresholds || {};
+    const crowdRange = th.crowd_favorite_range_pct;
+    const edgeRange = th.min_edge_range;
+    const crowdTxt = crowdRange
+      ? (th.min_favorite_pct || "?") + "% (" + crowdRange[0] + "–" + crowdRange[1] + "%)"
+      : (th.min_favorite_pct || 76) + "%";
+    const edgeTxt = edgeRange
+      ? (th.min_edge_cents || "?") + "¢ (" + edgeRange[0] + "–" + edgeRange[1] + "¢)"
+      : (th.min_edge_cents || "?") + "¢";
     $("thresholds-line").textContent =
-      "Edge ≥ " + (th.min_edge_cents || "?") + "¢ · Evidence ≥ " + (th.min_evidence_margin || "?") +
-      " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Top " + (th.top_n_markets || 4) + " markets";
+      (th.bucket_label ? th.bucket_label + " · " : "") +
+      "Edge ≥ " + edgeTxt + " · Crowd ≥ " + crowdTxt + " · Evidence ≥ " + (th.min_evidence_margin || "?") +
+      " · Agreement ≥ " + Math.round((th.min_agreement || 0) * 100) + "% · Kalshi card " + (th.kalshi_card_picks || th.top_n_markets || 3);
     $("updated-line").textContent = snap.updated_at ? "Updated " + snap.updated_at : "No scan yet";
   }
 
@@ -195,8 +383,9 @@
       summaryEl.innerHTML =
         '<div class="crowd-stat"><div class="k">Crowd P(YES)</div><div class="v">' +
         (crowd.prob_yes * 100).toFixed(1) + "%</div></div>" +
-        '<div class="crowd-stat"><div class="k">Consensus</div><div class="v ' + sideClass + '">' +
-        (crowd.finish || crowd.consensus) + "</div></div>" +
+        '<div class="crowd-stat"><div class="k">Favorite</div><div class="v ' + sideClass + '">' +
+        (crowd.favorite_pct != null ? crowd.favorite_pct.toFixed(1) + "%" : "—") +
+        (crowd.favorite_met === false ? " ✕" : crowd.favorite_met ? " ✓" : "") + "</div></div>" +
         '<div class="crowd-stat"><div class="k">Synthesis</div><div class="v">' + (crowd.synthesis || "—") + "</div></div>" +
         '<div class="crowd-stat"><div class="k">Agreement</div><div class="v">' +
         (crowd.agreement != null ? Math.round(crowd.agreement * 100) + "%" : "—") + "</div></div>" +
@@ -304,10 +493,125 @@
     }).join("");
   }
 
+  function renderOpenPositions(snap) {
+    const section = $("open-positions-section");
+    const body = $("open-positions-body");
+    const meta = $("open-positions-meta");
+    const positions = snap.open_positions || [];
+    if (!positions.length) {
+      section.classList.add("hidden");
+      return;
+    }
+    section.classList.remove("hidden");
+    const th = snap.thresholds || {};
+    meta.textContent =
+      "TP +" + Math.round((th.take_profit_pct || 0.5) * 100) + "% · SL −" +
+      Math.round((th.stop_loss_pct || 0.4) * 100) + "% · monitoring live";
+    body.innerHTML = positions.map(function (p) {
+      const bid = p.bid_cents != null ? p.bid_cents + "¢" : "—";
+      const unreal = p.unrealized_pnl_usd != null ? fmtUsd(p.unrealized_pnl_usd) : "—";
+      const unrealClass = pnlClass(p.unrealized_pnl_usd || 0);
+      return (
+        '<div class="open-pos-card">' +
+        '<div class="open-pos-title">' + p.ticker + " · " + (p.side || "").toUpperCase() + " x" + p.contracts + "</div>" +
+        '<div class="open-pos-grid">' +
+        '<div class="open-pos-kv"><span class="k">Entry</span><span class="v">' + p.entry_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Bid now</span><span class="v">' + bid + "</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Take profit</span><span class="v tp">' + p.tp_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Stop loss</span><span class="v sl">' + p.sl_cents + "¢</span></div>" +
+        '<div class="open-pos-kv"><span class="k">Unrealized</span><span class="v ' + unrealClass + '">' + unreal + "</span></div>" +
+        "</div></div>"
+      );
+    }).join("");
+  }
+
+  function renderProTools(payload) {
+    const body = $("pro-tools-body");
+    const meta = $("pro-tools-meta");
+    const pro = payload.pro_tools || {};
+    const status = pro.status || {};
+    const focus = pro.focus;
+    if (!status.enabled) {
+      meta.textContent = "Pro stream disabled";
+      body.innerHTML = '<div class="pro-tools-empty">Set KALSHI_PRO_ENABLED=true and API keys to enable depth + flow.</div>';
+      return;
+    }
+    const mode = status.mode || "off";
+    const age = status.last_message_age_ms;
+    meta.textContent =
+      (status.connected ? "LIVE " + mode.toUpperCase() : mode.toUpperCase()) +
+      (age != null ? " · " + age + "ms" : "") +
+      (status.subscribed_tickers && status.subscribed_tickers.length
+        ? " · " + status.subscribed_tickers.length + " markets"
+        : "");
+    if (!focus) {
+      body.innerHTML = '<div class="pro-tools-empty">Waiting for focus market from bot scan…</div>';
+      return;
+    }
+    const book = focus.top_of_book || {};
+    const depth = focus.depth || {};
+    const flow = focus.order_flow || {};
+    const exec = focus.execution || {};
+    const side = (pro.focus_side || "yes").toUpperCase();
+    const bidKey = side === "YES" ? "yes_bid_cents" : "no_bid_cents";
+    const askKey = side === "YES" ? "yes_ask_cents" : "no_ask_cents";
+    const askDepthKey = side === "YES" ? "yes_ask_contracts" : "no_ask_contracts";
+    const ladder = side === "YES" ? focus.yes_asks || [] : focus.no_asks || [];
+    const maxSize = ladder.reduce(function (m, lv) { return Math.max(m, lv.size || 0); }, 1);
+    const depthRows = ladder.slice(0, 8).map(function (lv) {
+      const pct = Math.min(100, Math.round(((lv.size || 0) / maxSize) * 100));
+      return (
+        "<tr><td>" + lv.price_cents + "¢</td><td>" + lv.size + "</td><td>" +
+        '<div class="pro-depth-bar-wrap"><div class="pro-depth-bar" style="width:' + pct + '%"></div></div>' +
+        "</td></tr>"
+      );
+    }).join("");
+    const tape = (flow.recent || []).slice(0, 8).map(function (t) {
+      const cls = t.side === "YES" ? "yes" : "no";
+      return (
+        '<div class="pro-flow-row"><span class="' + cls + '">' + t.side +
+        " " + t.count + " @ " + t.price_cents + "¢</span><span>—</span></div>"
+      );
+    }).join("") || '<div class="pro-tools-empty">No recent prints yet</div>';
+    body.innerHTML =
+      '<div class="pro-tools-grid">' +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Depth Ladder · ' + side + " ASK</div>" +
+      '<table class="pro-depth-table"><thead><tr><th>Price</th><th>Size</th><th>Depth</th></tr></thead><tbody>' +
+      depthRows +
+      "</tbody></table>" +
+      '<div class="pro-kv" style="margin-top:0.45rem"><span class="k">OBI</span><span class="v">' +
+      (focus.obi != null ? focus.obi.toFixed(3) : "—") + "</span></div>" +
+      "</div>" +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Order Flow</div>' +
+      '<div class="pro-kv"><span class="k">YES volume</span><span class="v yes">' + (flow.yes_volume || 0) + "</span></div>" +
+      '<div class="pro-kv"><span class="k">NO volume</span><span class="v no">' + (flow.no_volume || 0) + "</span></div>" +
+      '<div class="pro-kv"><span class="k">Net flow</span><span class="v">' + (flow.net_side || "—").toUpperCase() + "</span></div>" +
+      tape +
+      "</div>" +
+      '<div class="pro-tools-card">' +
+      '<div class="pro-tools-card-title">Execution Quality</div>' +
+      '<div class="pro-exec-score">' + (exec.score != null ? exec.score : "—") + "</div>" +
+      '<div class="pro-exec-note">' + (exec.note || "") + "</div>" +
+      '<div class="pro-kv" style="margin-top:0.55rem"><span class="k">Bid / Ask</span><span class="v">' +
+      (book[bidKey] != null ? book[bidKey] : "—") + " / " + (book[askKey] != null ? book[askKey] : "—") + "¢</span></div>" +
+      '<div class="pro-kv"><span class="k">Ask depth</span><span class="v">' + (depth[askDepthKey] || 0) + " contracts</span></div>" +
+      '<div class="pro-kv"><span class="k">VWAP (1 lot)</span><span class="v">' +
+      (exec.vwap_buy_yes_cents != null && side === "YES" ? exec.vwap_buy_yes_cents + "¢" :
+        exec.vwap_buy_no_cents != null && side === "NO" ? exec.vwap_buy_no_cents + "¢" : "—") + "</span></div>" +
+      '<div class="pro-kv"><span class="k">Slippage</span><span class="v">' +
+      (exec.slippage_buy_yes_cents != null ? exec.slippage_buy_yes_cents.toFixed(1) + "¢" : "0.0¢") + "</span></div>" +
+      "</div></div>";
+  }
+
   function render(payload) {
     const snap = payload.snapshot || {};
     const stats = payload.stats || {};
     renderStatusBanner(snap);
+    renderCurrently(snap);
+    renderOpenPositions(snap);
+    renderProTools(payload);
     renderTop4(snap);
     renderSnapshot(snap, stats);
     renderBest(snap);

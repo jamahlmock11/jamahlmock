@@ -116,6 +116,59 @@ def test_directional_evidence_picks_below():
     assert d.below_score > d.above_score
 
 
+def test_crowd_favorite_gate_blocks_below_dynamic_floor():
+    from kalshi_btc_1hr_bot.crowd_forecast import CrowdForecast, CrowdMember
+    from kalshi_btc_1hr_bot.dynamic_gates import resolve_dynamic_thresholds
+
+    members = tuple(
+        CrowdMember("m", 0.60, 1.0, 0.9, "model") for _ in range(8)
+    )
+    crowd = CrowdForecast(
+        prob_yes=0.60,
+        prob_no=0.40,
+        consensus_side="yes",
+        confidence=0.7,
+        agreement_score=0.8,
+        uncertainty=0.2,
+        quorum_count=8,
+        quorum_required=5,
+        quorum_met=True,
+        yes_votes=8,
+        no_votes=0,
+        synthesis="blend",
+        members=members,
+        top_votes=members[:4],
+        disagreeing=(),
+    )
+    th = resolve_dynamic_thresholds(1800, vol_regime="med", agreement_score=0.8, crowd_side_prob=0.60)
+    assert not crowd.side_met("yes", min_favorite=th.min_crowd_favorite)
+    assert crowd.side_pct("yes") == 60.0
+
+    votes = [ModelVote("m", 0.60, 0.5, 0.9)]
+    direction = directional_evidence(votes, n=1)
+    from kalshi_btc_1hr_bot.forecast import ForecastEnsembleOutput
+    from kalshi_btc_1hr_bot.ensemble import EnsembleResult
+    from kalshi_btc_1hr_bot.model import ModelOutput
+    import numpy as np
+
+    mo = ModelOutput(0.6, 0.4, 0.6, 0.6, 0.6, 0.6, 0.6, 0.5, 0.0, 0.0, 0.0, "low", 0.0, np.zeros(18))
+    ens = EnsembleResult(0.6, 0.4, 0.7, 0.2, 0.8, tuple(votes))
+    forecast = ForecastEnsembleOutput(0.6, 0.7, 0.8, 0.2, mo, ens, crowd, True)
+    edge = evaluate_edge_with_evidence(
+        0.6,
+        0.40,
+        0.65,
+        0.38,
+        0.63,
+        direction,
+        crowd_gates_enabled=True,
+        thresholds=th,
+        forecast=forecast,
+    )
+    assert not edge.should_trade
+    assert "Crowd" in edge.reason
+
+
 def test_evaluate_edge_with_evidence():
     votes = [
         ModelVote("a", 0.72, 0.5, 0.9),
@@ -172,9 +225,9 @@ def test_select_best_from_top_markets():
         _cand("D", 4.0, 0.40),
         _cand("E", 7.0, 0.05),
     ]
-    best = select_best_from_top_markets(cands, n=4)
+    best = select_best_from_top_markets(cands, n=3)
     assert best is not None
-    # Top 4 by edge: E, B, C, A — highest evidence among those is C
+    # Top 3 by edge: E, B, C — highest evidence among those is C
     assert best.ticker == "C"
 
 

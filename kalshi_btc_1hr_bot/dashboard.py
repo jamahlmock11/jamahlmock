@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from kalshi_btc_1hr_bot.config import load_config
 from kalshi_btc_1hr_bot.dashboard_state import STATE_PATH, load_snapshot
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient
+from kalshi_btc_1hr_bot.kalshi_pro import get_pro_hub
 from kalshi_btc_1hr_bot.trade_journal import TradeJournal
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,11 @@ def _trade_to_dict(trade: Any) -> dict[str, Any]:
         "pnl_usd": round(trade.pnl, 4) if trade.pnl is not None else None,
         "result": trade.result,
         "status": _trade_status(trade),
+        "tp_price": trade.tp_price,
+        "sl_price": trade.sl_price,
+        "exit_price": trade.exit_price,
+        "exit_reason": trade.exit_reason,
+        "closed_early": trade.closed_early,
     }
 
 
@@ -70,6 +76,13 @@ def _trade_status(trade: Any) -> str:
         return "BLOCKED"
     if not trade.settled:
         return "OPEN"
+    if getattr(trade, "closed_early", False):
+        reason = str(getattr(trade, "exit_reason", "") or "")
+        if reason == "take_profit":
+            return "TP"
+        if reason == "stop_loss":
+            return "SL"
+        return "EXIT"
     if trade.won:
         return "WIN"
     return "LOSS"
@@ -81,10 +94,16 @@ def build_api_payload() -> dict[str, Any]:
     trades = [_trade_to_dict(t) for t in journal.list_trades(limit=200)]
     cycles = journal.list_cycles(limit=30)
     stats = journal.stats()
+    focus = snapshot.get("best_pick") or {}
+    pro_tools = get_pro_hub().get_payload(
+        focus_ticker=str(focus.get("ticker") or "") or None,
+        focus_side=str(focus.get("side") or "yes"),
+    )
     return {
         "snapshot": snapshot,
         "stats": stats,
         "trades": trades,
+        "pro_tools": pro_tools,
         "cycles": [
             {
                 "ts": c["ts"],
@@ -162,11 +181,13 @@ async def _push_loop() -> None:
 async def lifespan(app: FastAPI):
     global _settlement_thread
     _stop_event.clear()
+    get_pro_hub().start()
     _settlement_thread = threading.Thread(target=_settlement_loop, daemon=True)
     _settlement_thread.start()
     push_task = asyncio.create_task(_push_loop())
     yield
     _stop_event.set()
+    get_pro_hub().stop()
     push_task.cancel()
     try:
         await push_task

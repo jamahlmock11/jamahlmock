@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,20 @@ from kalshi_btc_1hr_bot.config import ROOT
 
 DEFAULT_DB = ROOT / "data" / "trades.db"
 SETTLED_STATUSES = frozenset({"determined", "finalized", "settled", "closed"})
+
+
+def daily_pnl_today(journal: "TradeJournal") -> float:
+    """Realized + open cost for UTC calendar day — used to sync risk daily PnL."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    pnl = 0.0
+    for trade in journal.list_trades(limit=500):
+        if not trade.passed or trade.opened_ts < today_start:
+            continue
+        if trade.settled and trade.pnl is not None:
+            pnl += float(trade.pnl)
+        elif not trade.settled:
+            pnl -= float(trade.cost_usd)
+    return pnl
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,12 @@ class TradeRecord:
     strike: float
     spot: float
     finish: str
+    tp_price: float | None
+    sl_price: float | None
+    exit_price: float | None
+    exit_reason: str | None
+    exit_order_id: str | None
+    closed_early: bool
     settled: bool
     won: bool | None
     pnl: float | None
@@ -74,9 +95,27 @@ class TradeJournal:
                     won INTEGER,
                     pnl REAL,
                     result TEXT,
-                    settled_ts REAL
+                    settled_ts REAL,
+                    tp_price REAL,
+                    sl_price REAL,
+                    exit_price REAL,
+                    exit_reason TEXT,
+                    exit_order_id TEXT,
+                    closed_early INTEGER DEFAULT 0
                 )"""
             )
+            for col, typ in (
+                ("tp_price", "REAL"),
+                ("sl_price", "REAL"),
+                ("exit_price", "REAL"),
+                ("exit_reason", "TEXT"),
+                ("exit_order_id", "TEXT"),
+                ("closed_early", "INTEGER DEFAULT 0"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
+                except sqlite3.OperationalError:
+                    pass
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS cycle_log (
                     id INTEGER PRIMARY KEY,
@@ -113,6 +152,8 @@ class TradeJournal:
         strike: float = 0.0,
         spot: float = 0.0,
         finish: str = "",
+        tp_price: float | None = None,
+        sl_price: float | None = None,
     ) -> int:
         cost = contracts * entry_price
         with sqlite3.connect(self.path) as conn:
@@ -120,8 +161,8 @@ class TradeJournal:
                 """INSERT INTO trades
                 (opened_ts, ticker, side, contracts, entry_price, cost_usd, mode, order_id,
                  passed, block_reason, edge_cents, evidence_score, p_fair, confidence,
-                 strike, spot, finish, settled)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+                 strike, spot, finish, settled, tp_price, sl_price, closed_early)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,0)""",
                 (
                     time.time(),
                     ticker,
@@ -140,6 +181,8 @@ class TradeJournal:
                     strike,
                     spot,
                     finish,
+                    tp_price,
+                    sl_price,
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -252,8 +295,35 @@ class TradeJournal:
         with sqlite3.connect(self.path) as conn:
             conn.execute(
                 """UPDATE trades SET settled=1, won=?, pnl=?, result=?, settled_ts=?
-                WHERE id=?""",
+                WHERE id=? AND settled=0""",
                 (int(won), pnl, result, time.time(), trade_id),
+            )
+
+    def close_trade_early(
+        self,
+        trade_id: int,
+        *,
+        exit_price: float,
+        exit_reason: str,
+        pnl: float,
+        exit_order_id: str = "",
+    ) -> None:
+        """Mark a trade closed via take-profit or stop-loss before settlement."""
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                """UPDATE trades SET settled=1, won=?, pnl=?, result=?, settled_ts=?,
+                   exit_price=?, exit_reason=?, exit_order_id=?, closed_early=1
+                WHERE id=? AND settled=0""",
+                (
+                    int(pnl >= 0),
+                    pnl,
+                    exit_reason,
+                    time.time(),
+                    exit_price,
+                    exit_reason,
+                    exit_order_id,
+                    trade_id,
+                ),
             )
 
     def poll_settlements(self, client: Any) -> list[dict[str, Any]]:
@@ -280,6 +350,7 @@ class TradeJournal:
                     "side": trade.side,
                     "won": side_won,
                     "pnl": pnl,
+                    "cost_usd": trade.cost_usd,
                     "result": result,
                     "settled_ts": time.time(),
                 }
@@ -287,6 +358,7 @@ class TradeJournal:
         return resolved
 
     def _row_to_trade(self, row: sqlite3.Row) -> TradeRecord:
+        keys = row.keys()
         return TradeRecord(
             id=row["id"],
             opened_ts=row["opened_ts"],
@@ -306,6 +378,12 @@ class TradeJournal:
             strike=row["strike"] or 0.0,
             spot=row["spot"] or 0.0,
             finish=row["finish"] or "",
+            tp_price=row["tp_price"] if "tp_price" in keys else None,
+            sl_price=row["sl_price"] if "sl_price" in keys else None,
+            exit_price=row["exit_price"] if "exit_price" in keys else None,
+            exit_reason=row["exit_reason"] if "exit_reason" in keys else None,
+            exit_order_id=row["exit_order_id"] if "exit_order_id" in keys else None,
+            closed_early=bool(row["closed_early"]) if "closed_early" in keys else False,
             settled=bool(row["settled"]),
             won=bool(row["won"]) if row["won"] is not None else None,
             pnl=row["pnl"],
