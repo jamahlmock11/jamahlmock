@@ -24,6 +24,11 @@ from kalshi_btc_1hr_bot.evidence import (
 from kalshi_btc_1hr_bot.forecast import ForecastEnsemble, forecast_ensemble_from_market_data, agreement_score_for_gates
 from kalshi_btc_1hr_bot.kalshi_card import select_kalshi_card_markets
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
+from kalshi_btc_1hr_bot.late_crowd import (
+    LateCrowdQualification,
+    resolve_late_crowd_context,
+    select_late_crowd_pick,
+)
 from kalshi_btc_1hr_bot.notifications import NotifyConfig, PhoneNotifier
 from kalshi_btc_1hr_bot.position_exits import (
     bid_for_side,
@@ -220,6 +225,7 @@ class HourlyBot:
         candidates: list[MarketCandidate] = []
         decisions: list[dict] = []
         window_markets: list[dict[str, Any]] = []
+        card_rows: list[dict[str, Any]] = []
         scanned = 0
 
         try:
@@ -285,9 +291,51 @@ class HourlyBot:
             scanned = len(window_markets)
 
         pick_n = min(self.config.gates.kalshi_card_picks, config.TOP_N_MARKETS)
-        best = select_best_from_top_markets(
+        hour_close = card_rows[0]["close_time"] if card_rows else None
+        ref_secs = card_rows[0]["secs_left"] if card_rows else 0.0
+        late_context = resolve_late_crowd_context(
+            cfg=self.config,
+            secs_left=ref_secs,
+            open_positions=self.risk.state.open_positions,
+            journal=self.journal,
+            window_markets=window_markets,
+            hour_close=hour_close,
+        )
+
+        normal_best = select_best_from_top_markets(
             candidates, n=pick_n, trend_bias=self.config.gates.trend_bias_selection
         )
+        late_pick: MarketCandidate | None = None
+        late_qual: LateCrowdQualification | None = None
+        edge_fee = gate_fee_cents(
+            self.config.edge.fee_per_contract_cents,
+            subtract=self.config.edge.subtract_fees_from_edge,
+        )
+
+        if late_context.active:
+            late_pick, late_qual = select_late_crowd_pick(
+                candidates,
+                cfg=self.config,
+                fee_cents=edge_fee,
+                subtract_fees=self.config.edge.subtract_fees_from_edge,
+            )
+            if late_pick and late_qual and late_qual.qualified:
+                logger.info(
+                    "Late crowd armed (%s) — pick %s: %s",
+                    late_context.reason,
+                    late_pick.ticker,
+                    late_qual.reason,
+                )
+
+        best = normal_best
+        if (
+            late_context.active
+            and late_pick
+            and late_qual
+            and late_qual.qualified
+            and (normal_best is None or not normal_best.edge.should_trade)
+        ):
+            best = late_pick
         best_ticker = best.ticker if best else None
 
         for cand in candidates:
@@ -295,20 +343,36 @@ class HourlyBot:
                 ticker=cand.ticker, seconds_to_expiry=cand.secs_left
             )
             is_pick = cand.ticker == best_ticker
+            is_late_entry = (
+                is_pick
+                and late_pick is not None
+                and late_qual is not None
+                and late_qual.qualified
+                and cand.ticker == late_pick.ticker
+            )
+            trade_edge = (
+                late_qual.edge
+                if is_late_entry and late_qual and late_qual.edge is not None
+                else cand.edge
+            )
             contracts = 0
             action = "NO_TRADE"
 
-            if is_pick and cand.edge.should_trade and allowed:
+            if is_pick and trade_edge.should_trade and allowed:
                 win_prob = (
                     cand.forecast.p_fair
                     if cand.direction.side == "yes"
                     else 1.0 - cand.forecast.p_fair
                 )
+                size_mult = (
+                    self.config.late_crowd.size_multiplier if is_late_entry else 1.0
+                )
                 contracts = kelly_contracts(
                     win_prob=win_prob,
-                    price=cand.edge.market_price,
+                    price=trade_edge.market_price,
                     sizing=self.config.sizing,
                     confidence=cand.forecast.confidence,
+                    size_multiplier=size_mult,
                 )
                 if contracts > 0:
                     action = f"BUY_{cand.direction.side.upper()}"
@@ -316,23 +380,26 @@ class HourlyBot:
                         cand.ticker,
                         cand.direction.side,
                         contracts,
-                        cand.edge.market_price,
+                        trade_edge.market_price,
                         meta={
-                            "edge_cents": cand.edge.edge_cents,
+                            "edge_cents": trade_edge.edge_cents,
                             "evidence_score": cand.evidence_score,
                             "p_fair": cand.forecast.p_fair,
                             "confidence": cand.forecast.confidence,
                             "strike": cand.strike,
                             "spot": data.spot,
                             "finish": cand.direction.finish_label,
+                            "late_crowd": is_late_entry,
+                            "late_crowd_reason": late_qual.reason if is_late_entry and late_qual else "",
+                            "size_multiplier": size_mult if is_late_entry else 1.0,
                         },
                     )
 
-            reason = cand.edge.reason
-            if not is_pick and cand.edge.should_trade:
+            reason = trade_edge.reason
+            if not is_pick and trade_edge.should_trade:
                 reason = f"not top-{pick_n} Kalshi card pick"
-            elif not cand.edge.should_trade:
-                reason = cand.edge.reason
+            elif not trade_edge.should_trade:
+                reason = trade_edge.reason
             elif not allowed:
                 reason = block_reason
 
@@ -345,16 +412,17 @@ class HourlyBot:
                 "spot": data.spot,
                 "strike": cand.strike,
                 "secs_left": cand.secs_left,
-                "edge": cand.edge.edge_cents / 100.0,
+                "edge": trade_edge.edge_cents / 100.0,
                 "side": cand.direction.side,
                 "finish": cand.direction.finish_label,
                 "evidence_above": cand.direction.above_score,
                 "evidence_below": cand.direction.below_score,
                 "evidence_margin": cand.direction.margin,
                 "evidence_score": cand.evidence_score,
-                "price": cand.edge.market_price,
+                "price": trade_edge.market_price,
                 "contracts": contracts,
                 "selected": is_pick and action != "NO_TRADE",
+                "late_crowd": is_late_entry,
                 "reason": reason,
                 "layers": cand.forecast.layers,
                 "votes": [(v.name, v.prob_yes, v.weight) for v in cand.direction.top_votes],
@@ -368,16 +436,17 @@ class HourlyBot:
             }
             decisions.append(decision)
 
-            if is_pick or cand.edge.should_trade:
+            if is_pick or trade_edge.should_trade:
                 logger.info(
-                    "%s %s | finish=%s ev=%.3f edge=%.1f¢ conf=%.0f%% %s",
+                    "%s %s | finish=%s ev=%.3f edge=%.1f¢ conf=%.0f%% %s%s",
                     action,
                     cand.ticker,
                     cand.direction.finish_label,
                     cand.evidence_score,
-                    cand.edge.edge_cents,
+                    trade_edge.edge_cents,
                     cand.forecast.confidence * 100,
                     "(SELECTED)" if decision["selected"] else "",
+                    " [LATE CROWD]" if is_late_entry else "",
                 )
 
         if scanned == 0:
@@ -388,10 +457,16 @@ class HourlyBot:
                 data.is_official,
             )
         elif best is None:
-            logger.info(
-                "NO TRADE — no Kalshi card pick cleared edge + evidence from %d strikes",
-                len(candidates),
-            )
+            if late_context.active and late_qual is None:
+                logger.info(
+                    "NO TRADE — late crowd window but no strike cleared crowd favorite from %d card picks",
+                    len(candidates),
+                )
+            else:
+                logger.info(
+                    "NO TRADE — no Kalshi card pick cleared edge + evidence from %d strikes",
+                    len(candidates),
+                )
 
         self._publish_dashboard(
             data=data,
@@ -401,6 +476,8 @@ class HourlyBot:
             best_ticker=best_ticker,
             markets_scanned=scanned,
             early_exits=early_exits,
+            late_context=late_context,
+            late_qual=late_qual,
         )
 
         return decisions
@@ -603,6 +680,8 @@ class HourlyBot:
         best_ticker: str | None,
         markets_scanned: int,
         early_exits: list[dict[str, Any]] | None = None,
+        late_context: Any = None,
+        late_qual: LateCrowdQualification | None = None,
     ) -> None:
         mode = "PAPER" if self.config.paper else "LIVE"
         balance = self._balance_usd()
@@ -643,6 +722,8 @@ class HourlyBot:
             recent_settlements=settlements,
             open_positions=self._build_open_positions_view(),
             early_exits=early_exits or [],
+            late_context=late_context,
+            late_qual=late_qual,
         )
         save_snapshot(snapshot)
 

@@ -58,6 +58,7 @@ class DashboardSnapshot:
     entry_context: dict[str, Any] | None = None
     open_positions: list[dict[str, Any]] = field(default_factory=list)
     early_exits: list[dict[str, Any]] = field(default_factory=list)
+    late_crowd: dict[str, Any] = field(default_factory=dict)
 
 
 def _iso_now() -> str:
@@ -515,9 +516,12 @@ def build_snapshot(
     recent_settlements: list[dict] | None = None,
     open_positions: list[dict[str, Any]] | None = None,
     early_exits: list[dict[str, Any]] | None = None,
+    late_context: Any = None,
+    late_qual: Any = None,
 ) -> DashboardSnapshot:
     selected = next((d for d in decisions if d.get("selected")), None)
     best_decision = next((d for d in decisions if d.get("ticker") == best_ticker), None)
+    late_entry = bool(selected and selected.get("late_crowd"))
 
     contracts = 0
     allowed, block_reason = True, "ok"
@@ -617,10 +621,15 @@ def build_snapshot(
 
     if selected:
         action_light = "green"
-        action_headline = f"TRADE — {action.replace('_', ' ')}"
+        action_headline = (
+            f"LATE CROWD — {action.replace('_', ' ')}"
+            if late_entry
+            else f"TRADE — {action.replace('_', ' ')}"
+        )
         action_detail = (
             f"{focus.ticker if focus else ''} · {contracts} contracts · "
             f"edge {top_edge:.1f}¢ · evidence {focus.evidence_score:.3f}"
+            + (f" · {cfg.late_crowd.size_multiplier:.1f}× size" if late_entry else "")
             if focus
             else "Order executing"
         )
@@ -742,6 +751,9 @@ def build_snapshot(
             "take_profit_pct": cfg.exit.take_profit_pct,
             "stop_loss_pct": cfg.exit.stop_loss_pct,
             "exit_min_hold_seconds": cfg.exit.min_hold_seconds,
+            "late_crowd_enabled": cfg.late_crowd.enabled,
+            "late_crowd_min_favorite_pct": round(cfg.late_crowd.min_crowd_favorite * 100, 1),
+            "late_crowd_size_multiplier": cfg.late_crowd.size_multiplier,
         },
         config_summary={
             "bankroll_usd": cfg.sizing.bankroll_usd,
@@ -754,6 +766,18 @@ def build_snapshot(
         entry_context=entry_context,
         open_positions=open_positions or [],
         early_exits=early_exits or [],
+        late_crowd={
+            "enabled": cfg.late_crowd.enabled,
+            "active": bool(late_context and getattr(late_context, "active", False)),
+            "in_window": bool(late_context and getattr(late_context, "in_window", False)),
+            "hour_untraded": bool(late_context and getattr(late_context, "hour_untraded", False)),
+            "slot_free": bool(late_context and getattr(late_context, "slot_free", False)),
+            "reason": getattr(late_context, "reason", "") if late_context else "",
+            "qualified": bool(late_qual and getattr(late_qual, "qualified", False)),
+            "qualification": getattr(late_qual, "reason", "") if late_qual else "",
+            "size_multiplier": cfg.late_crowd.size_multiplier,
+            "min_favorite_pct": round(cfg.late_crowd.min_crowd_favorite * 100, 1),
+        },
     )
 
 

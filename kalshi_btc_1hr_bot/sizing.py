@@ -11,13 +11,15 @@ def kelly_contracts(
     price: float,
     sizing: SizingConfig,
     confidence: float = 1.0,
+    size_multiplier: float = 1.0,
 ) -> int:
     """Fractional Kelly sizing capped at max_trade_usd (0 = full bankroll pct)."""
     if price <= 0 or price >= 1 or win_prob <= price:
         return 0
 
     f_star = (win_prob - price) / (1.0 - price)
-    f = max(0.0, min(1.0, f_star * sizing.kelly_fraction * confidence))
+    mult = max(1.0, size_multiplier)
+    f = max(0.0, min(1.0, f_star * sizing.kelly_fraction * confidence * mult))
     bankroll_cap = sizing.bankroll_usd * sizing.max_bankroll_pct
     if sizing.max_trade_usd > 0:
         max_dollars = min(bankroll_cap, sizing.max_trade_usd)

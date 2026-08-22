@@ -81,6 +81,19 @@ TAKE_PROFIT_PCT = 0.50  # exit when bid >= entry + 50% of entry cost
 STOP_LOSS_PCT = 0.50  # exit when bid <= entry - 50% of entry cost (wider for hourly vol)
 EXIT_MIN_HOLD_SECONDS = 0.0
 
+# Late crowd favorite — enter with more size when hour slot unused + crowd strong near expiry
+LATE_CROWD_ENABLED = True
+LATE_CROWD_MIN_SECONDS = 120.0  # same as risk min — last ~2 min still allowed
+LATE_CROWD_MAX_SECONDS = 1500.0  # 25 min left — covers hour_late + hour_final buckets
+LATE_CROWD_MIN_FAVORITE = 0.72  # crowd must strongly favor trade side
+LATE_CROWD_MIN_EDGE_CENTS = 0.3
+LATE_CROWD_MIN_EVIDENCE = 0.010
+LATE_CROWD_MIN_QUORUM = 4
+LATE_CROWD_MIN_AGREEMENT = 0.50
+LATE_CROWD_SIZE_MULTIPLIER = 1.75  # Kelly sizing boost for late conviction entries
+LATE_CROWD_SKIP_FLOW = True  # crowd is the signal — don't require tape confirmation
+LATE_CROWD_SKIP_TREND = True  # allow mean-reversion when crowd is decisive
+
 
 @dataclass
 class ModelConfig:
@@ -175,6 +188,21 @@ class GateConfig:
 
 
 @dataclass
+class LateCrowdConfig:
+    enabled: bool = LATE_CROWD_ENABLED
+    min_seconds_to_expiry: float = LATE_CROWD_MIN_SECONDS
+    max_seconds_to_expiry: float = LATE_CROWD_MAX_SECONDS
+    min_crowd_favorite: float = LATE_CROWD_MIN_FAVORITE
+    min_edge_cents: float = LATE_CROWD_MIN_EDGE_CENTS
+    min_evidence_margin: float = LATE_CROWD_MIN_EVIDENCE
+    min_quorum: int = LATE_CROWD_MIN_QUORUM
+    min_agreement: float = LATE_CROWD_MIN_AGREEMENT
+    size_multiplier: float = LATE_CROWD_SIZE_MULTIPLIER
+    skip_flow: bool = LATE_CROWD_SKIP_FLOW
+    skip_trend: bool = LATE_CROWD_SKIP_TREND
+
+
+@dataclass
 class BotConfig:
     series_ticker: str = "KXBTCD"
     window_seconds: int = WINDOW_SECONDS
@@ -188,6 +216,7 @@ class BotConfig:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     gates: GateConfig = field(default_factory=GateConfig)
     exit: ExitConfig = field(default_factory=ExitConfig)
+    late_crowd: LateCrowdConfig = field(default_factory=LateCrowdConfig)
 
     kalshi_env: str = field(default_factory=lambda: os.getenv("KALSHI_ENV", "public"))
     kalshi_api_key_id: str = field(default_factory=lambda: os.getenv("KALSHI_API_KEY_ID", ""))
@@ -260,6 +289,37 @@ def load_config() -> BotConfig:
     cfg.exit.take_profit_pct = float(os.getenv("TAKE_PROFIT_PCT", str(TAKE_PROFIT_PCT)))
     cfg.exit.stop_loss_pct = float(os.getenv("STOP_LOSS_PCT", str(STOP_LOSS_PCT)))
     cfg.exit.min_hold_seconds = float(os.getenv("EXIT_MIN_HOLD_SECONDS", str(EXIT_MIN_HOLD_SECONDS)))
+    cfg.late_crowd.enabled = os.getenv(
+        "LATE_CROWD_ENABLED", "true" if LATE_CROWD_ENABLED else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.late_crowd.min_seconds_to_expiry = float(
+        os.getenv("LATE_CROWD_MIN_SECONDS", str(LATE_CROWD_MIN_SECONDS))
+    )
+    cfg.late_crowd.max_seconds_to_expiry = float(
+        os.getenv("LATE_CROWD_MAX_SECONDS", str(LATE_CROWD_MAX_SECONDS))
+    )
+    cfg.late_crowd.min_crowd_favorite = float(
+        os.getenv("LATE_CROWD_MIN_FAVORITE", str(LATE_CROWD_MIN_FAVORITE))
+    )
+    cfg.late_crowd.min_edge_cents = float(
+        os.getenv("LATE_CROWD_MIN_EDGE_CENTS", str(LATE_CROWD_MIN_EDGE_CENTS))
+    )
+    cfg.late_crowd.min_evidence_margin = float(
+        os.getenv("LATE_CROWD_MIN_EVIDENCE", str(LATE_CROWD_MIN_EVIDENCE))
+    )
+    cfg.late_crowd.min_quorum = int(os.getenv("LATE_CROWD_MIN_QUORUM", str(LATE_CROWD_MIN_QUORUM)))
+    cfg.late_crowd.min_agreement = float(
+        os.getenv("LATE_CROWD_MIN_AGREEMENT", str(LATE_CROWD_MIN_AGREEMENT))
+    )
+    cfg.late_crowd.size_multiplier = float(
+        os.getenv("LATE_CROWD_SIZE_MULTIPLIER", str(LATE_CROWD_SIZE_MULTIPLIER))
+    )
+    cfg.late_crowd.skip_flow = os.getenv(
+        "LATE_CROWD_SKIP_FLOW", "true" if LATE_CROWD_SKIP_FLOW else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.late_crowd.skip_trend = os.getenv(
+        "LATE_CROWD_SKIP_TREND", "true" if LATE_CROWD_SKIP_TREND else "false"
+    ).lower() in ("true", "1", "yes")
     cfg.edge.subtract_fees_from_edge = os.getenv(
         "SUBTRACT_FEES_FROM_EDGE", "false" if not SUBTRACT_FEES_FROM_EDGE else "true"
     ).lower() in ("true", "1", "yes")
