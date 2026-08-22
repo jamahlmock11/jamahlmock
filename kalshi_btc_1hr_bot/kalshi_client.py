@@ -84,7 +84,7 @@ class KalshiClient:
         return self._request("GET", f"/markets/{ticker}/orderbook", params=params)
 
     def get_trades(self, ticker: str, *, limit: int = 80) -> dict:
-        return self._request("GET", f"/markets/{ticker}/trades", params={"limit": limit})
+        return self._request("GET", "/markets/trades", params={"ticker": ticker, "limit": limit})
 
     def place_order(
         self,
