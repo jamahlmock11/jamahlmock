@@ -49,6 +49,7 @@ class RiskManager:
         *,
         ticker: str,
         seconds_to_expiry: float,
+        hour_trade_count: int = 0,
     ) -> tuple[bool, str]:
         self.reset_daily_if_needed()
         bankroll = self.state.day_start_balance or self.config.sizing.bankroll_usd
@@ -58,6 +59,8 @@ class RiskManager:
             return False, "daily_loss_stop"
         if self.state.open_positions >= self.risk.max_open_positions:
             return False, "max_open_positions"
+        if hour_trade_count >= self.risk.max_trades_per_hour:
+            return False, "max_trades_per_hour"
         if ticker in self.state.traded_tickers:
             return False, "already_traded"
         if seconds_to_expiry < self.risk.min_seconds_to_expiry:

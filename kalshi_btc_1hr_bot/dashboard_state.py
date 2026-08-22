@@ -490,6 +490,7 @@ def build_entry_context(
             "cooldown_remaining_s": cooldown_remaining,
             "open_positions": risk.state.open_positions,
             "max_open_positions": cfg.risk.max_open_positions,
+            "max_trades_per_hour": cfg.risk.max_trades_per_hour,
             "already_traded": focus.ticker in risk.state.traded_tickers,
             "daily_pnl_usd": round(risk.state.daily_pnl, 2),
         },
@@ -518,6 +519,7 @@ def build_snapshot(
     early_exits: list[dict[str, Any]] | None = None,
     late_context: Any = None,
     late_qual: Any = None,
+    hour_trade_count: int = 0,
 ) -> DashboardSnapshot:
     selected = next((d for d in decisions if d.get("selected")), None)
     best_decision = next((d for d in decisions if d.get("ticker") == best_ticker), None)
@@ -550,7 +552,9 @@ def build_snapshot(
             ),
         )
         allowed, block_reason = risk.allow_trade(
-            ticker=focus.ticker, seconds_to_expiry=focus.secs_left
+            ticker=focus.ticker,
+            seconds_to_expiry=focus.secs_left,
+            hour_trade_count=hour_trade_count,
         )
 
     if best is not None:
@@ -710,6 +714,9 @@ def build_snapshot(
             "daily_pnl_usd": round(risk.state.daily_pnl, 4),
             "open_positions": risk.state.open_positions,
             "max_open_positions": cfg.risk.max_open_positions,
+            "hour_trades": hour_trade_count,
+            "max_trades_per_hour": cfg.risk.max_trades_per_hour,
+            "hour_trades_remaining": max(0, cfg.risk.max_trades_per_hour - hour_trade_count),
             "cooldown_seconds": cfg.risk.cooldown_seconds,
             "last_trade_age_s": round(max(0.0, time.time() - risk.state.last_trade_ts), 1)
             if risk.state.last_trade_ts

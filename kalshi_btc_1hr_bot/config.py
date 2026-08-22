@@ -74,6 +74,7 @@ TREND_BIAS_SELECTION = True  # prefer trend+flow aligned picks among card top-N
 
 # Daily loss stop — % of day-start bankroll (raised for small accounts)
 DAILY_LOSS_STOP_PCT = 0.12
+MAX_TRADES_PER_HOUR = 2  # entry attempts per hourly window (e.g. early + late, or retry after exit)
 
 # Take-profit / stop-loss on open positions (sell at market bid before settlement)
 EXIT_ENABLED = True
@@ -142,6 +143,7 @@ class ExitConfig:
 class RiskConfig:
     daily_loss_stop_pct: float = DAILY_LOSS_STOP_PCT
     max_open_positions: int = 1
+    max_trades_per_hour: int = MAX_TRADES_PER_HOUR
     min_seconds_to_expiry: float = 120.0
     max_seconds_to_expiry: float = 3600.0
     cooldown_seconds: float = 5.0
@@ -281,6 +283,7 @@ def load_config() -> BotConfig:
         "TREND_BIAS_SELECTION", "true" if TREND_BIAS_SELECTION else "false"
     ).lower() in ("true", "1", "yes")
     cfg.risk.daily_loss_stop_pct = float(os.getenv("DAILY_LOSS_STOP_PCT", str(DAILY_LOSS_STOP_PCT)))
+    cfg.risk.max_trades_per_hour = int(os.getenv("MAX_TRADES_PER_HOUR", str(MAX_TRADES_PER_HOUR)))
     cfg.exit.enabled = os.getenv("EXIT_ENABLED", "true" if EXIT_ENABLED else "false").lower() in (
         "true",
         "1",

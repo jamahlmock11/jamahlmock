@@ -16,7 +16,6 @@ from kalshi_btc_1hr_bot.late_crowd import (
     in_late_crowd_window,
     resolve_late_crowd_context,
     select_late_crowd_pick,
-    traded_current_hour,
 )
 from kalshi_btc_1hr_bot.model import ModelOutput
 import numpy as np
@@ -117,12 +116,10 @@ def test_in_late_crowd_window():
     assert not in_late_crowd_window(1600, cfg)
 
 
-def test_traded_current_hour_blocks_late_mode():
+def test_one_hour_trade_still_allows_late_mode():
     hour_close = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
     tickers = {"KXBTCD-TEST-A", "KXBTCD-TEST-B"}
     journal = _FakeJournal({"KXBTCD-TEST-A"})
-    assert traded_current_hour(journal, tickers)
-
     cfg = BotConfig()
     ctx = resolve_late_crowd_context(
         cfg=cfg,
@@ -136,8 +133,28 @@ def test_traded_current_hour_blocks_late_mode():
         hour_close=hour_close,
     )
     assert ctx.in_window
+    assert ctx.hour_untraded
+    assert ctx.active
+
+
+def test_two_hour_trades_block_late_mode():
+    hour_close = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    journal = _FakeJournal({"KXBTCD-TEST-A", "KXBTCD-TEST-B"})
+    cfg = BotConfig()
+    ctx = resolve_late_crowd_context(
+        cfg=cfg,
+        secs_left=600,
+        open_positions=0,
+        journal=journal,
+        window_markets=[
+            {"ticker": "KXBTCD-TEST-A", "close_time": hour_close},
+            {"ticker": "KXBTCD-TEST-B", "close_time": hour_close},
+        ],
+        hour_close=hour_close,
+    )
     assert not ctx.hour_untraded
     assert not ctx.active
+    assert "hour trade limit" in ctx.reason
 
 
 def test_late_crowd_qualifies_when_crowd_strong():

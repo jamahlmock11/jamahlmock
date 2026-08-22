@@ -26,6 +26,8 @@ from kalshi_btc_1hr_bot.kalshi_card import select_kalshi_card_markets
 from kalshi_btc_1hr_bot.kalshi_client import KalshiClient, is_hourly_market, normalize_market
 from kalshi_btc_1hr_bot.late_crowd import (
     LateCrowdQualification,
+    hour_market_tickers,
+    hour_trade_count,
     resolve_late_crowd_context,
     select_late_crowd_pick,
 )
@@ -337,10 +339,14 @@ class HourlyBot:
         ):
             best = late_pick
         best_ticker = best.ticker if best else None
+        hour_tickers = hour_market_tickers(window_markets, hour_close)
+        hour_trades = hour_trade_count(self.journal, hour_tickers)
 
         for cand in candidates:
             allowed, block_reason = self.risk.allow_trade(
-                ticker=cand.ticker, seconds_to_expiry=cand.secs_left
+                ticker=cand.ticker,
+                seconds_to_expiry=cand.secs_left,
+                hour_trade_count=hour_trades,
             )
             is_pick = cand.ticker == best_ticker
             is_late_entry = (
@@ -478,6 +484,7 @@ class HourlyBot:
             early_exits=early_exits,
             late_context=late_context,
             late_qual=late_qual,
+            hour_trade_count=hour_trades,
         )
 
         return decisions
@@ -682,6 +689,7 @@ class HourlyBot:
         early_exits: list[dict[str, Any]] | None = None,
         late_context: Any = None,
         late_qual: LateCrowdQualification | None = None,
+        hour_trade_count: int = 0,
     ) -> None:
         mode = "PAPER" if self.config.paper else "LIVE"
         balance = self._balance_usd()
@@ -724,6 +732,7 @@ class HourlyBot:
             early_exits=early_exits or [],
             late_context=late_context,
             late_qual=late_qual,
+            hour_trade_count=hour_trade_count,
         )
         save_snapshot(snapshot)
 

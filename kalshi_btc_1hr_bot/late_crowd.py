@@ -45,13 +45,23 @@ def hour_market_tickers(window_markets: list[dict[str, Any]], hour_close: dateti
     }
 
 
-def traded_current_hour(journal: Any, tickers: set[str]) -> bool:
+def hour_trade_count(journal: Any, tickers: set[str]) -> int:
     if not tickers:
-        return False
-    for trade in journal.list_trades(limit=200):
-        if trade.passed and trade.ticker in tickers:
-            return True
-    return False
+        return 0
+    return sum(
+        1
+        for trade in journal.list_trades(limit=200)
+        if trade.passed and trade.ticker in tickers
+    )
+
+
+def hour_entries_available(journal: Any, tickers: set[str], *, max_trades: int) -> bool:
+    return hour_trade_count(journal, tickers) < max_trades
+
+
+def traded_current_hour(journal: Any, tickers: set[str]) -> bool:
+    """True when at least one passed trade exists on this hour's tickers."""
+    return hour_trade_count(journal, tickers) > 0
 
 
 def resolve_late_crowd_context(
@@ -71,14 +81,24 @@ def resolve_late_crowd_context(
     bucket = classify_hour_bucket(secs_left) if in_window else None
     slot_free = open_positions < cfg.risk.max_open_positions
     hour_tickers = hour_market_tickers(window_markets, hour_close)
-    hour_untraded = not traded_current_hour(journal, hour_tickers)
+    hour_trades = hour_trade_count(journal, hour_tickers)
+    hour_untraded = hour_entries_available(
+        journal, hour_tickers, max_trades=cfg.risk.max_trades_per_hour
+    )
 
     if not in_window:
         return LateCrowdContext(False, False, hour_untraded, slot_free, bucket, "outside late window")
     if not slot_free:
         return LateCrowdContext(False, in_window, hour_untraded, False, bucket, "position slot in use")
     if not hour_untraded:
-        return LateCrowdContext(False, in_window, False, slot_free, bucket, "already traded this hour")
+        return LateCrowdContext(
+            False,
+            in_window,
+            False,
+            slot_free,
+            bucket,
+            f"hour trade limit reached ({hour_trades}/{cfg.risk.max_trades_per_hour})",
+        )
 
     return LateCrowdContext(True, in_window, hour_untraded, slot_free, bucket, "late crowd armed")
 
