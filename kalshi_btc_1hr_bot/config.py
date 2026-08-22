@@ -69,6 +69,7 @@ MIN_EVIDENCE_MARGIN = 0.02
 TREND_GATE_ENABLED = True
 FLOW_CONFIRM_ENABLED = True
 TREND_MIN_MOMENTUM = 0.0  # blended 5m/15m/30m drift must be positive (YES) or negative (NO)
+TREND_REQUIRE_SPOT_VS_STRIKE = False  # allow BELOW above strike / ABOVE below strike (mean-reversion)
 TREND_BIAS_SELECTION = True  # prefer trend+flow aligned picks among card top-N
 
 # Daily loss stop — % of day-start bankroll (raised for small accounts)
@@ -169,6 +170,7 @@ class GateConfig:
     trend_gate_enabled: bool = TREND_GATE_ENABLED
     flow_confirm_enabled: bool = FLOW_CONFIRM_ENABLED
     trend_min_momentum: float = TREND_MIN_MOMENTUM
+    trend_require_spot_vs_strike: bool = TREND_REQUIRE_SPOT_VS_STRIKE
     trend_bias_selection: bool = TREND_BIAS_SELECTION
 
 
@@ -243,6 +245,9 @@ def load_config() -> BotConfig:
         "FLOW_CONFIRM_ENABLED", "true" if FLOW_CONFIRM_ENABLED else "false"
     ).lower() in ("true", "1", "yes")
     cfg.gates.trend_min_momentum = float(os.getenv("TREND_MIN_MOMENTUM", str(TREND_MIN_MOMENTUM)))
+    cfg.gates.trend_require_spot_vs_strike = os.getenv(
+        "TREND_REQUIRE_SPOT_VS_STRIKE", "false" if not TREND_REQUIRE_SPOT_VS_STRIKE else "true"
+    ).lower() in ("true", "1", "yes")
     cfg.gates.trend_bias_selection = os.getenv(
         "TREND_BIAS_SELECTION", "true" if TREND_BIAS_SELECTION else "false"
     ).lower() in ("true", "1", "yes")

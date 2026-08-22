@@ -34,32 +34,38 @@ def check_trend_alignment(
     strike: float,
     data: MarketData,
     min_momentum: float,
+    require_spot_vs_strike: bool = False,
 ) -> tuple[bool, str]:
-    """Trend-following: momentum and spot vs strike must agree with trade side."""
+    """Momentum must agree with trade side; spot vs strike is optional (off by default).
+
+    Mean-reversion trades (e.g. BELOW with spot above strike) are allowed when
+    require_spot_vs_strike is false — only short-term momentum direction is checked.
+    """
     mu = blended_momentum(data)
     side = side.lower()
+    spot_label = f"spot ${spot:,.0f} vs strike ${strike:,.0f}"
     if side == "yes":
         momentum_ok = mu > min_momentum
-        position_ok = spot >= strike
-        detail = f"mom {mu:+.5f} (need >{min_momentum:.5f}), spot ${spot:,.0f} vs strike ${strike:,.0f}"
+        position_ok = (not require_spot_vs_strike) or spot >= strike
+        detail = f"mom {mu:+.5f} (need >{min_momentum:.5f}), {spot_label}"
         ok = momentum_ok and position_ok
         if not ok:
             parts = []
             if not momentum_ok:
                 parts.append("momentum not up")
-            if not position_ok:
+            if require_spot_vs_strike and spot < strike:
                 parts.append("spot below strike")
             return False, f"Trend ABOVE: {', '.join(parts)} · {detail}"
         return True, f"Trend ABOVE aligned · {detail}"
     momentum_ok = mu < -min_momentum
-    position_ok = spot <= strike
-    detail = f"mom {mu:+.5f} (need <{-min_momentum:.5f}), spot ${spot:,.0f} vs strike ${strike:,.0f}"
+    position_ok = (not require_spot_vs_strike) or spot <= strike
+    detail = f"mom {mu:+.5f} (need <{-min_momentum:.5f}), {spot_label}"
     ok = momentum_ok and position_ok
     if not ok:
         parts = []
         if not momentum_ok:
             parts.append("momentum not down")
-        if not position_ok:
+        if require_spot_vs_strike and spot > strike:
             parts.append("spot above strike")
         return False, f"Trend BELOW: {', '.join(parts)} · {detail}"
     return True, f"Trend BELOW aligned · {detail}"
@@ -137,6 +143,7 @@ def apply_confirmation_gates(
             strike=strike,
             data=data,
             min_momentum=cfg.gates.trend_min_momentum,
+            require_spot_vs_strike=cfg.gates.trend_require_spot_vs_strike,
         )
         if not trend_ok:
             return (
