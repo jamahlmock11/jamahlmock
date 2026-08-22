@@ -67,7 +67,7 @@ MIN_EVIDENCE_MARGIN = 0.02
 
 # Trend-following confirmation gates (keep all existing edge/evidence/risk rules)
 TREND_GATE_ENABLED = True
-FLOW_CONFIRM_ENABLED = True
+FLOW_CONFIRM_ENABLED = False
 TREND_MIN_MOMENTUM = 0.0  # blended 5m/15m/30m drift must be positive (YES) or negative (NO)
 TREND_REQUIRE_SPOT_VS_STRIKE = False  # allow BELOW above strike / ABOVE below strike (mean-reversion)
 TREND_BIAS_SELECTION = True  # prefer trend+flow aligned picks among card top-N
