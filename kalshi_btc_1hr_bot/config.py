@@ -65,10 +65,19 @@ KALSHI_CARD_PICKS = 3  # only trade strikes shown on Kalshi's hourly card
 KALSHI_CARD_ONLY = True
 MIN_EVIDENCE_MARGIN = 0.02
 
+# Trend-following confirmation gates (keep all existing edge/evidence/risk rules)
+TREND_GATE_ENABLED = True
+FLOW_CONFIRM_ENABLED = True
+TREND_MIN_MOMENTUM = 0.0  # blended 5m/15m/30m drift must be positive (YES) or negative (NO)
+TREND_BIAS_SELECTION = True  # prefer trend+flow aligned picks among card top-N
+
+# Daily loss stop — % of day-start bankroll (raised for small accounts)
+DAILY_LOSS_STOP_PCT = 0.12
+
 # Take-profit / stop-loss on open positions (sell at market bid before settlement)
 EXIT_ENABLED = True
 TAKE_PROFIT_PCT = 0.50  # exit when bid >= entry + 50% of entry cost
-STOP_LOSS_PCT = 0.40  # exit when bid <= entry - 40% of entry cost
+STOP_LOSS_PCT = 0.50  # exit when bid <= entry - 50% of entry cost (wider for hourly vol)
 EXIT_MIN_HOLD_SECONDS = 0.0
 
 
@@ -117,7 +126,7 @@ class ExitConfig:
 
 @dataclass
 class RiskConfig:
-    daily_loss_stop_pct: float = 0.06
+    daily_loss_stop_pct: float = DAILY_LOSS_STOP_PCT
     max_open_positions: int = 1
     min_seconds_to_expiry: float = 120.0
     max_seconds_to_expiry: float = 3600.0
@@ -157,6 +166,10 @@ class GateConfig:
     dynamic_gates_enabled: bool = DYNAMIC_GATES_ENABLED
     kalshi_card_only: bool = KALSHI_CARD_ONLY
     kalshi_card_picks: int = KALSHI_CARD_PICKS
+    trend_gate_enabled: bool = TREND_GATE_ENABLED
+    flow_confirm_enabled: bool = FLOW_CONFIRM_ENABLED
+    trend_min_momentum: float = TREND_MIN_MOMENTUM
+    trend_bias_selection: bool = TREND_BIAS_SELECTION
 
 
 @dataclass
@@ -223,6 +236,17 @@ def load_config() -> BotConfig:
         "KALSHI_CARD_ONLY", "true" if KALSHI_CARD_ONLY else "false"
     ).lower() in ("true", "1", "yes")
     cfg.gates.kalshi_card_picks = int(os.getenv("KALSHI_CARD_PICKS", str(KALSHI_CARD_PICKS)))
+    cfg.gates.trend_gate_enabled = os.getenv(
+        "TREND_GATE_ENABLED", "true" if TREND_GATE_ENABLED else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.gates.flow_confirm_enabled = os.getenv(
+        "FLOW_CONFIRM_ENABLED", "true" if FLOW_CONFIRM_ENABLED else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.gates.trend_min_momentum = float(os.getenv("TREND_MIN_MOMENTUM", str(TREND_MIN_MOMENTUM)))
+    cfg.gates.trend_bias_selection = os.getenv(
+        "TREND_BIAS_SELECTION", "true" if TREND_BIAS_SELECTION else "false"
+    ).lower() in ("true", "1", "yes")
+    cfg.risk.daily_loss_stop_pct = float(os.getenv("DAILY_LOSS_STOP_PCT", str(DAILY_LOSS_STOP_PCT)))
     cfg.exit.enabled = os.getenv("EXIT_ENABLED", "true" if EXIT_ENABLED else "false").lower() in (
         "true",
         "1",

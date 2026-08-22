@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,20 @@ from kalshi_btc_1hr_bot.config import ROOT
 
 DEFAULT_DB = ROOT / "data" / "trades.db"
 SETTLED_STATUSES = frozenset({"determined", "finalized", "settled", "closed"})
+
+
+def daily_pnl_today(journal: "TradeJournal") -> float:
+    """Realized + open cost for UTC calendar day — used to sync risk daily PnL."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    pnl = 0.0
+    for trade in journal.list_trades(limit=500):
+        if not trade.passed or trade.opened_ts < today_start:
+            continue
+        if trade.settled and trade.pnl is not None:
+            pnl += float(trade.pnl)
+        elif not trade.settled:
+            pnl -= float(trade.cost_usd)
+    return pnl
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,9 @@ class KalshiClient:
         params = {"depth": depth} if depth > 0 else None
         return self._request("GET", f"/markets/{ticker}/orderbook", params=params)
 
+    def get_trades(self, ticker: str, *, limit: int = 80) -> dict:
+        return self._request("GET", f"/markets/{ticker}/trades", params={"limit": limit})
+
     def place_order(
         self,
         *,

@@ -33,6 +33,7 @@ from kalshi_btc_1hr_bot.position_exits import (
 from kalshi_btc_1hr_bot.risk import RiskManager
 from kalshi_btc_1hr_bot.sizing import kelly_contracts
 from kalshi_btc_1hr_bot.trade_journal import TradeJournal, TradeRecord
+from kalshi_btc_1hr_bot.trend_gates import FlowSnapshot, apply_confirmation_gates, fetch_flow_snapshot
 from kalshi_btc_1hr_bot.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,8 @@ class HourlyBot:
 
     def _sync_risk_from_journal(self) -> None:
         """Restore in-memory risk state from open journal trades after restart."""
+        balance = self._balance_usd()
+        self.risk.sync_from_journal(self.journal, balance_usd=balance)
         pending = [t for t in self.journal.pending_trades() if t.passed]
         self.risk.state.open_positions = len(pending)
         for trade in pending:
@@ -97,6 +100,7 @@ class HourlyBot:
         secs: float,
         strike: float,
         ticker: str,
+        flow: FlowSnapshot | None = None,
     ) -> MarketCandidate:
         forecast = forecast_ensemble_from_market_data(
             self.ensemble,
@@ -180,6 +184,15 @@ class HourlyBot:
                 forecast=aligned,
             )
 
+        edge, trend_ok, flow_ok, trend_detail, flow_detail = apply_confirmation_gates(
+            edge,
+            direction,
+            data=data,
+            strike=float(strike),
+            flow=flow,
+            cfg=self.config,
+        )
+
         return MarketCandidate(
             ticker=ticker,
             strike=float(strike),
@@ -190,11 +203,17 @@ class HourlyBot:
             evidence_score=evidence_score(direction, aligned),
             market=market,
             thresholds=thresholds,
+            trend_aligned=trend_ok,
+            flow_aligned=flow_ok,
+            trend_detail=trend_detail,
+            flow_detail=flow_detail,
         )
 
     def run_cycle(self) -> list[dict]:
         """Scan KXBTCD, evaluate Kalshi card strikes only, trade best of top 3."""
         self._sync_live_sizing()
+        balance = self._balance_usd()
+        self.risk.sync_from_journal(self.journal, balance_usd=balance)
         early_exits = self._manage_open_positions()
         now = datetime.now(timezone.utc)
         data = self.feed.refresh()
@@ -249,12 +268,16 @@ class HourlyBot:
                 card_rows = window_markets
 
             for row in card_rows:
+                flow = None
+                if self.config.gates.flow_confirm_enabled:
+                    flow = fetch_flow_snapshot(self.client, row["ticker"])
                 cand = self._evaluate_market(
                     market=row["market"],
                     data=data,
                     secs=row["secs_left"],
                     strike=row["strike"],
                     ticker=row["ticker"],
+                    flow=flow,
                 )
                 candidates.append(cand)
         except Exception:
@@ -262,7 +285,9 @@ class HourlyBot:
             scanned = len(window_markets)
 
         pick_n = min(self.config.gates.kalshi_card_picks, config.TOP_N_MARKETS)
-        best = select_best_from_top_markets(candidates, n=pick_n)
+        best = select_best_from_top_markets(
+            candidates, n=pick_n, trend_bias=self.config.gates.trend_bias_selection
+        )
         best_ticker = best.ticker if best else None
 
         for cand in candidates:

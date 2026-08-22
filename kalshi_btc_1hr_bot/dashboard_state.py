@@ -219,6 +219,30 @@ def build_checklist(
     items.extend(
         gate_items
         + [
+            *(
+                [
+                    CheckItem(
+                        "Trend alignment",
+                        gate_cand.trend_aligned,
+                        gate_cand.trend_detail or "—",
+                        "trend",
+                    )
+                ]
+                if cfg.gates.trend_gate_enabled
+                else []
+            ),
+            *(
+                [
+                    CheckItem(
+                        "Order flow confirms",
+                        gate_cand.flow_aligned,
+                        gate_cand.flow_detail or "—",
+                        "flow",
+                    )
+                ]
+                if cfg.gates.flow_confirm_enabled
+                else []
+            ),
             CheckItem(
                 f"Top-{cfg.gates.kalshi_card_picks} Kalshi card pick",
                 is_pick and gate_cand.edge.should_trade,
@@ -707,6 +731,10 @@ def build_snapshot(
             "use_ensemble_agreement": cfg.gates.use_ensemble_agreement,
             "kalshi_card_only": cfg.gates.kalshi_card_only,
             "kalshi_card_picks": cfg.gates.kalshi_card_picks,
+            "trend_gate_enabled": cfg.gates.trend_gate_enabled,
+            "flow_confirm_enabled": cfg.gates.flow_confirm_enabled,
+            "trend_bias_selection": cfg.gates.trend_bias_selection,
+            "daily_loss_stop_pct": cfg.risk.daily_loss_stop_pct,
             "top_n_votes": config.TOP_N_VOTES,
             "top_n_markets": config.TOP_N_MARKETS,
             "max_trade_usd": cfg.sizing.max_trade_usd,

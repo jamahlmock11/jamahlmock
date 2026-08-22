@@ -202,6 +202,10 @@ class MarketCandidate:
     evidence_score: float
     market: dict
     thresholds: DynamicThresholds | None = None
+    trend_aligned: bool = False
+    flow_aligned: bool = False
+    trend_detail: str = ""
+    flow_detail: str = ""
 
 
 def evidence_score(direction: DirectionalEvidence, forecast: ForecastEnsembleOutput) -> float:
@@ -213,8 +217,10 @@ def evidence_score(direction: DirectionalEvidence, forecast: ForecastEnsembleOut
 def select_best_from_top_markets(
     candidates: list[MarketCandidate],
     n: int | None = None,
+    *,
+    trend_bias: bool | None = None,
 ) -> MarketCandidate | None:
-    """Take top-N markets by edge, return the one with strongest directional evidence."""
+    """Take top-N markets by edge; return best by trend/flow bias then evidence."""
     n = n or config.TOP_N_MARKETS
     if not candidates:
         return None
@@ -224,4 +230,15 @@ def select_best_from_top_markets(
         return None
 
     top = sorted(tradeable, key=lambda c: c.edge.edge_cents, reverse=True)[:n]
+    use_trend_bias = config.TREND_BIAS_SELECTION if trend_bias is None else trend_bias
+    if use_trend_bias:
+        return max(
+            top,
+            key=lambda c: (
+                int(c.trend_aligned),
+                int(c.flow_aligned),
+                c.evidence_score,
+                c.edge.edge_cents,
+            ),
+        )
     return max(top, key=lambda c: c.evidence_score)
