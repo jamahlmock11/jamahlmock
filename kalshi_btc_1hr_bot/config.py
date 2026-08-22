@@ -84,7 +84,7 @@ EXIT_MIN_HOLD_SECONDS = 0.0
 # Late crowd favorite — enter with more size when hour slot unused + crowd strong near expiry
 LATE_CROWD_ENABLED = True
 LATE_CROWD_MIN_SECONDS = 120.0  # same as risk min — last ~2 min still allowed
-LATE_CROWD_MAX_SECONDS = 1500.0  # 25 min left — covers hour_late + hour_final buckets
+LATE_CROWD_MAX_SECONDS = 600.0  # 10 min left — final window only
 LATE_CROWD_MIN_FAVORITE = 0.72  # crowd must strongly favor trade side
 LATE_CROWD_MIN_EDGE_CENTS = 0.3
 LATE_CROWD_MIN_EVIDENCE = 0.010
